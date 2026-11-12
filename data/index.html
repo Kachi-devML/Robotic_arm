@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111827">
+  <title>Robotic Arm Control</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/visualizer.js" defer></script>
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">ESP32-S3 · 4-DOF ARM</p>
+        <h1>Robotic arm control</h1>
+      </div>
+      <section class="status-card" aria-label="Connection and arm state">
+        <span id="connection-dot" class="status-dot"></span>
+        <div>
+          <strong id="connection-label">Connecting</strong>
+          <span id="state-label">State unavailable</span>
+        </div>
+        <span id="homed-badge" class="badge">Not homed</span>
+      </section>
+    </header>
+
+    <div id="error-banner" class="error-banner" role="alert" hidden></div>
+
+    <section class="reach-strip" aria-label="Arm reach limits">
+      <div>
+        <span class="eyebrow">WRIST-CENTER REACH</span>
+        <strong id="reach-value">Loading limits…</strong>
+      </div>
+      <div>
+        <span class="eyebrow">PAYLOAD PROFILE</span>
+        <strong id="profile-summary">EMPTY</strong>
+      </div>
+      <div>
+        <span class="eyebrow">TARGET DISTANCE</span>
+        <strong id="target-distance">—</strong>
+      </div>
+    </section>
+
+    <div class="workspace">
+      <section class="panel visual-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">SIDE VIEW · POST BASE ROTATION</p>
+            <h2>Inverse kinematics</h2>
+          </div>
+          <span id="preview-label" class="subtle">Preview a target to compare postures</span>
+        </div>
+        <div class="canvas-wrap">
+          <canvas id="arm-canvas" aria-label="Side-view diagram of both candidate arm postures"></canvas>
+        </div>
+        <div class="legend">
+          <span><i class="legend-mark up"></i>Elbow up</span>
+          <span><i class="legend-mark down"></i>Elbow down</span>
+          <span><i class="legend-mark invalid"></i>Outside joint limits</span>
+          <span><i class="legend-mark target"></i>Target</span>
+        </div>
+        <div class="progress-row">
+          <div class="progress-track"><span id="progress-bar"></span></div>
+          <span id="progress-label">No active trajectory</span>
+        </div>
+      </section>
+
+      <section class="panel controls-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">TARGET POSITION · CENTIMETERS</p>
+            <h2>Move planning</h2>
+          </div>
+        </div>
+        <form id="target-form">
+          <div class="target-grid">
+            <label for="target-x">X <span>cm</span><input id="target-x" name="x" type="number" step="0.1" value="5" required></label>
+            <label for="target-y">Y <span>cm</span><input id="target-y" name="y" type="number" step="0.1" value="0" required></label>
+            <label for="target-z">Z <span>cm</span><input id="target-z" name="z" type="number" step="0.1" value="30" required></label>
+            <label for="target-phi">φ <span>deg</span><input id="target-phi" name="phi" type="number" step="1" value="180" required></label>
+          </div>
+          <div class="form-row">
+            <label for="posture-select">Posture
+              <select id="posture-select" name="posture" disabled>
+                <option value="elbow_down">Elbow down</option>
+                <option value="elbow_up">Elbow up</option>
+              </select>
+            </label>
+            <label for="gripper-toggle">Gripper
+              <select id="gripper-toggle" name="gripper">
+                <option value="open">Open</option>
+                <option value="closed">Closed</option>
+              </select>
+            </label>
+          </div>
+          <div class="action-row">
+            <button id="preview-button" class="button secondary" type="button">Preview IK</button>
+            <button id="move-button" class="button primary" type="submit" disabled>Move arm</button>
+          </div>
+        </form>
+
+        <div class="divider"></div>
+        <div class="form-row">
+          <label for="payload-select">Payload profile
+            <select id="payload-select">
+              <option value="empty">Empty</option>
+              <option value="loaded">Loaded (derated)</option>
+            </select>
+          </label>
+          <div class="payload-note">Choose the profile that matches the carried load.</div>
+        </div>
+
+        <div class="safety-actions">
+          <button id="home-button" class="button secondary" type="button">Home / re-home</button>
+          <button id="stop-button" class="button stop" type="button">Stop</button>
+          <button id="clear-estop-button" class="button warning" type="button">Clear E-stop</button>
+        </div>
+      </section>
+
+      <section class="panel math-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">ANALYTICAL SOLUTION</p>
+            <h2>Step-by-step math</h2>
+          </div>
+          <span id="math-count" class="badge">No solution yet</span>
+        </div>
+        <ol id="math-steps" class="math-steps" aria-live="polite">
+          <li class="empty-state">Enter a target and select <strong>Preview IK</strong> to see the derivation.</li>
+        </ol>
+      </section>
+    </div>
+    <footer>Commands are sent directly to the arm over the local network. Verify the workspace is clear before moving.</footer>
+  </main>
+</body>
+</html>
