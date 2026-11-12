@@ -33,9 +33,14 @@ constexpr uint8_t kEstopSw = 17;
 
 // Direct ESP32-LEDC servo outputs.  GPIO4–7 are plain GPIOs, not strapping pins,
 // not used by USB/UART0, and are suitable for 50 Hz servo PWM.
-constexpr uint8_t kServoShoulderPwm = 4;
-constexpr uint8_t kServoElbowPwm = 5;
-constexpr uint8_t kServoWristPwm = 6;
-constexpr uint8_t kServoGripperPwm = 7;
+constexpr uint8_t SERVO_SHOULDER_PWM = 4;
+constexpr uint8_t SERVO_ELBOW_PWM = 5;
+constexpr uint8_t SERVO_WRIST_PWM = 6;
+constexpr uint8_t SERVO_GRIPPER_PWM = 7;
+
+constexpr uint8_t kServoShoulderPwm = SERVO_SHOULDER_PWM;
+constexpr uint8_t kServoElbowPwm = SERVO_ELBOW_PWM;
+constexpr uint8_t kServoWristPwm = SERVO_WRIST_PWM;
+constexpr uint8_t kServoGripperPwm = SERVO_GRIPPER_PWM;
 
 }  // namespace Pins
