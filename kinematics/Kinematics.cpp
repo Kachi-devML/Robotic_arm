@@ -231,11 +231,19 @@ IKResult solveIK(const IKInput& input) {
             theta3_up);
 
     // ---- Populate solutions ----
-    result.elbow_down = {theta0, theta1_down, theta2_down, theta3_down,
-                         true, ErrorCode::NONE};
-    result.elbow_up   = {theta0, theta1_up,   theta2_up,   theta3_up,
-                         true, ErrorCode::NONE};
+    const PostureSolution geometricDown = {
+        theta0, theta1_down, theta2_down, theta3_down,
+        true, ErrorCode::NONE,
+    };
+    const PostureSolution geometricUp = {
+        theta0, theta1_up, theta2_up, theta3_up,
+        true, ErrorCode::NONE,
+    };
+    result.elbow_down = mapIkToJointAngles(geometricDown);
+    result.elbow_up = mapIkToJointAngles(geometricUp);
 
+    // With kElbowSign = -1, elbow_down maps positive IK theta2 negative;
+    // it can satisfy the nonnegative joint limit only near full extension.
     // ---- Post-check: joint soft limits (spec §3.4 step 2) ----
     validatePosture(result.elbow_down);
     validatePosture(result.elbow_up);
@@ -245,6 +253,10 @@ IKResult solveIK(const IKInput& input) {
 
 FKResult solveFK(float theta0, float theta1, float theta2, float theta3) {
     FKResult result = {};
+    const PostureSolution geometric = mapJointToGeometricAngles(
+        {theta0, theta1, theta2, theta3, true, ErrorCode::NONE});
+    theta2 = geometric.theta2;
+    theta3 = geometric.theta3;
 
     const float L1 = JointLimits::kL1_cm;
     const float L2 = JointLimits::kL2_cm;

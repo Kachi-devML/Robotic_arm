@@ -26,6 +26,24 @@ static constexpr float kPi = JointLimits::kPi;
 
 static constexpr float deg(float d) { return JointLimits::degToRad(d); }
 
+Kinematics::IKInput targetFromJointAngles(float theta0,
+                                          float theta1,
+                                          float theta2,
+                                          float theta3) {
+    const Kinematics::PostureSolution jointAngles = {
+        theta0, theta1, theta2, theta3, true, Kinematics::ErrorCode::NONE,
+    };
+    const auto geometric =
+        Kinematics::mapJointToGeometricAngles(jointAngles);
+    const auto fk = Kinematics::solveFK(theta0, theta1, theta2, theta3);
+    return {
+        fk.effector_3d.x,
+        fk.effector_3d.y,
+        fk.effector_3d.z,
+        geometric.theta1 + geometric.theta2 + geometric.theta3,
+    };
+}
+
 void setUp(void) {}
 void tearDown(void) {}
 
@@ -155,59 +173,46 @@ void test_ik_huge_finite_input_has_finite_outputs(void) {
     TEST_ASSERT_TRUE(allNumericFieldsFinite(result));
 }
 
-void test_ik_soft_limit_tolerance_clamps_wrist(void) {
+void test_ik_soft_limit_tolerance_clamps_joint_angles(void) {
     const float t0 = 0.0f;
     const float t1 = deg(30.0f);
     const float t2 = deg(45.0f);
-    const struct {
-        float requested;
-        float clamped;
-    } cases[] = {
-        {deg(-0.25f), JointLimits::kTheta3Min_rad},
-        {deg(180.25f), JointLimits::kTheta3Max_rad},
-    };
+    const auto wristInput =
+        targetFromJointAngles(t0, t1, t2, deg(-0.25f));
+    const auto wristResult = Kinematics::solveIK(wristInput);
+    TEST_ASSERT_TRUE(wristResult.elbow_up.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::NONE,
+                      wristResult.elbow_up.error);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, JointLimits::kTheta3Min_rad,
+                             wristResult.elbow_up.theta3);
+    assertValidAnglesWithinLimits(wristResult);
 
-    for (const auto& testCase : cases) {
-        const float t3 = testCase.requested;
-        const auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-        const Kinematics::IKInput input = {
-            fk.effector_3d.x,
-            fk.effector_3d.y,
-            fk.effector_3d.z,
-            t1 + t2 + t3,
-        };
-        const auto result = Kinematics::solveIK(input);
-
-        TEST_ASSERT_TRUE(result.elbow_down.valid);
-        TEST_ASSERT_EQUAL(Kinematics::ErrorCode::NONE, result.elbow_down.error);
-        TEST_ASSERT_TRUE(result.elbow_down.theta3 >= JointLimits::kTheta3Min_rad);
-        TEST_ASSERT_TRUE(result.elbow_down.theta3 <= JointLimits::kTheta3Max_rad);
-        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, testCase.clamped,
-                                 result.elbow_down.theta3);
-        assertValidAnglesWithinLimits(result);
-    }
+    const float baseAtLimitPlusTolerance = deg(170.25f);
+    const auto baseInput = targetFromJointAngles(
+        baseAtLimitPlusTolerance, t1, t2, 0.0f);
+    const auto baseResult = Kinematics::solveIK(baseInput);
+    TEST_ASSERT_TRUE(baseResult.elbow_up.valid);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, JointLimits::kTheta0SoftMax_rad,
+                             baseResult.elbow_up.theta0);
+    assertValidAnglesWithinLimits(baseResult);
 }
 
 void test_ik_soft_limit_outside_tolerance_is_rejected(void) {
     const float t0 = 0.0f;
     const float t1 = deg(30.0f);
     const float t2 = deg(45.0f);
-    const float outOfToleranceWristAngles[] = {deg(-0.6f), deg(180.6f)};
+    const auto wristInput = targetFromJointAngles(t0, t1, t2, deg(-0.6f));
+    const auto wristResult = Kinematics::solveIK(wristInput);
+    TEST_ASSERT_FALSE(wristResult.elbow_up.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
+                      wristResult.elbow_up.error);
 
-    for (const float t3 : outOfToleranceWristAngles) {
-        const auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-        const Kinematics::IKInput input = {
-            fk.effector_3d.x,
-            fk.effector_3d.y,
-            fk.effector_3d.z,
-            t1 + t2 + t3,
-        };
-        const auto result = Kinematics::solveIK(input);
-
-        TEST_ASSERT_FALSE(result.elbow_down.valid);
-        TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
-                          result.elbow_down.error);
-    }
+    const auto baseInput =
+        targetFromJointAngles(deg(170.6f), t1, t2, 0.0f);
+    const auto baseResult = Kinematics::solveIK(baseInput);
+    TEST_ASSERT_FALSE(baseResult.elbow_up.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
+                      baseResult.elbow_up.error);
 }
 
 void test_ik_full_extension_is_stable_and_in_limits(void) {
@@ -246,15 +251,16 @@ void test_ik_near_max_reach_matches_double_precision_reference(void) {
     const double dw = std::hypot(rw, zw);
     const double cosTheta2 =
         (dw * dw - l1 * l1 - l2 * l2) / (2.0 * l1 * l2);
-    const double theta2 = std::acos(cosTheta2);
+    const double theta2 = -std::acos(cosTheta2);
     const double theta1 = std::atan2(zw, rw) -
         std::atan2(l2 * std::sin(theta2), l1 + l2 * std::cos(theta2));
     const double theta0 = 0.0;
     const double theta3 = static_cast<double>(input.phi) - theta1 - theta2;
-    const auto& solution = result.elbow_down;
+    const auto& solution = result.elbow_up;
 
     TEST_ASSERT_TRUE(result.reachable);
-    TEST_ASSERT_TRUE(solution.valid);
+    // This near-extension target is reachable but its wrist angle is outside
+    // the configured joint range; the solver still reports its finite angles.
     TEST_ASSERT_FLOAT_WITHIN(
         0.005f, static_cast<float>(theta0 * 180.0 / JointLimits::kPi),
         JointLimits::radToDeg(solution.theta0));
@@ -262,10 +268,10 @@ void test_ik_near_max_reach_matches_double_precision_reference(void) {
         0.005f, static_cast<float>(theta1 * 180.0 / JointLimits::kPi),
         JointLimits::radToDeg(solution.theta1));
     TEST_ASSERT_FLOAT_WITHIN(
-        0.005f, static_cast<float>(theta2 * 180.0 / JointLimits::kPi),
+        0.005f, static_cast<float>(-theta2 * 180.0 / JointLimits::kPi),
         JointLimits::radToDeg(solution.theta2));
     TEST_ASSERT_FLOAT_WITHIN(
-        0.005f, static_cast<float>(theta3 * 180.0 / JointLimits::kPi),
+        0.005f, static_cast<float>(-theta3 * 180.0 / JointLimits::kPi),
         JointLimits::radToDeg(solution.theta3));
 }
 
@@ -354,22 +360,18 @@ void test_ik_base_angle_negative_y(void) {
 /// This is expected hardware behaviour: with 0–180° servos the elbow-up
 /// configuration is mechanically impossible, so the post-check correctly
 /// marks it JOINT_LIMIT_EXCEEDED.
-void test_ik_elbow_up_limit_violation(void) {
+void test_ik_elbow_down_limit_violation(void) {
     const float t0 = 0.0f;
     const float t1 = deg(30.0f);
     const float t2 = deg(45.0f);
     const float t3 = 0.0f;
-    const float phi = t1 + t2 + t3;
-
-    auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-    Kinematics::IKInput in = {fk.effector_3d.x, fk.effector_3d.y,
-                              fk.effector_3d.z, phi};
+    const Kinematics::IKInput in = targetFromJointAngles(t0, t1, t2, t3);
     auto r = Kinematics::solveIK(in);
 
-    TEST_ASSERT_TRUE(r.elbow_down.valid);
-    TEST_ASSERT_FALSE(r.elbow_up.valid);
+    TEST_ASSERT_TRUE(r.elbow_up.valid);
+    TEST_ASSERT_FALSE(r.elbow_down.valid);
     TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
-                      r.elbow_up.error);
+                      r.elbow_down.error);
 }
 
 /// Both posture structs are always populated (even when one is invalid).
@@ -378,10 +380,9 @@ void test_ik_both_postures_always_populated(void) {
     auto r = Kinematics::solveIK(in);
 
     TEST_ASSERT_TRUE(r.reachable);
-    // Elbow-down θ2 > 0 (from atan2(+sin, cos))
-    TEST_ASSERT_TRUE(r.elbow_down.theta2 > 0.0f);
-    // Elbow-up  θ2 < 0 (from atan2(−sin, cos)) — struct is still filled in
-    TEST_ASSERT_TRUE(r.elbow_up.theta2 < 0.0f);
+    // The Revision 3 sign map negates geometric θ2 for joint-space results.
+    TEST_ASSERT_TRUE(r.elbow_down.theta2 < 0.0f);
+    TEST_ASSERT_TRUE(r.elbow_up.theta2 > 0.0f);
 }
 
 // ====================================================================
@@ -430,20 +431,15 @@ void test_ik_fk_roundtrip_simple(void) {
     const float t1 = deg(30.0f);   // π/6
     const float t2 = deg(45.0f);   // π/4
     const float t3 = 0.0f;
-    const float phi = t1 + t2 + t3;
-
-    auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-
-    Kinematics::IKInput in = {fk.effector_3d.x, fk.effector_3d.y,
-                              fk.effector_3d.z, phi};
+    const Kinematics::IKInput in = targetFromJointAngles(t0, t1, t2, t3);
     auto ik = Kinematics::solveIK(in);
 
     TEST_ASSERT_TRUE(ik.reachable);
-    TEST_ASSERT_TRUE(ik.elbow_down.valid);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_down.theta0);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_down.theta1);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_down.theta2);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_down.theta3);
+    TEST_ASSERT_TRUE(ik.elbow_up.valid);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_up.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_up.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_up.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_up.theta3);
 }
 
 /// Round-trip with a non-zero base angle and all four joints non-trivial.
@@ -452,20 +448,15 @@ void test_ik_fk_roundtrip_rotated(void) {
     const float t1 = deg(45.0f);
     const float t2 = deg(30.0f);
     const float t3 = deg(15.0f);
-    const float phi = t1 + t2 + t3;  // 90°
-
-    auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-
-    Kinematics::IKInput in = {fk.effector_3d.x, fk.effector_3d.y,
-                              fk.effector_3d.z, phi};
+    const Kinematics::IKInput in = targetFromJointAngles(t0, t1, t2, t3);
     auto ik = Kinematics::solveIK(in);
 
     TEST_ASSERT_TRUE(ik.reachable);
-    TEST_ASSERT_TRUE(ik.elbow_down.valid);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_down.theta0);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_down.theta1);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_down.theta2);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_down.theta3);
+    TEST_ASSERT_TRUE(ik.elbow_up.valid);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_up.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_up.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_up.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_up.theta3);
 }
 
 /// Round-trip with a negative base angle (third quadrant target).
@@ -474,20 +465,15 @@ void test_ik_fk_roundtrip_negative_base(void) {
     const float t1 = deg(50.0f);
     const float t2 = deg(60.0f);
     const float t3 = deg(10.0f);
-    const float phi = t1 + t2 + t3;  // 120°
-
-    auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-
-    Kinematics::IKInput in = {fk.effector_3d.x, fk.effector_3d.y,
-                              fk.effector_3d.z, phi};
+    const Kinematics::IKInput in = targetFromJointAngles(t0, t1, t2, t3);
     auto ik = Kinematics::solveIK(in);
 
     TEST_ASSERT_TRUE(ik.reachable);
-    TEST_ASSERT_TRUE(ik.elbow_down.valid);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_down.theta0);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_down.theta1);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_down.theta2);
-    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_down.theta3);
+    TEST_ASSERT_TRUE(ik.elbow_up.valid);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_up.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_up.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_up.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_up.theta3);
 }
 
 /// Round-trip at near-minimum reach (Dw just above |L1−L2| = 3 cm).
@@ -497,22 +483,15 @@ void test_ik_fk_roundtrip_near_min_reach(void) {
     const float t1 = deg(60.0f);
     const float t2 = deg(150.0f);  // nearly folded back
     const float t3 = deg(10.0f);
-    const float phi = t1 + t2 + t3;
-
-    auto fk = Kinematics::solveFK(t0, t1, t2, t3);
-
-    Kinematics::IKInput in = {fk.effector_3d.x, fk.effector_3d.y,
-                              fk.effector_3d.z, phi};
+    const Kinematics::IKInput in = targetFromJointAngles(t0, t1, t2, t3);
     auto ik = Kinematics::solveIK(in);
 
-    // May or may not be reachable depending on where L3 puts the wrist.
-    // If reachable, the round-trip must hold.
-    if (ik.reachable && ik.elbow_down.valid) {
-        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_down.theta0);
-        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_down.theta1);
-        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_down.theta2);
-        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_down.theta3);
-    }
+    TEST_ASSERT_TRUE(ik.reachable);
+    TEST_ASSERT_TRUE(ik.elbow_up.valid);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t0, ik.elbow_up.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t1, ik.elbow_up.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t2, ik.elbow_up.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, t3, ik.elbow_up.theta3);
     // Either way, reach info must be populated
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 3.0f,  ik.dw_min);
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 27.0f, ik.dw_max);
@@ -566,8 +545,8 @@ void test_fk_shoulder_straight_up(void) {
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 47.0f, fk.effector_2d.z); // d1+L1+L2+L3
 }
 
-/// Home position: θ0=0, θ1=θ2=θ3=90°.
-/// Arm goes up (shoulder), folds back (elbow), then down (wrist).
+/// Home position: θ0=0, θ1=θ2=θ3=90° in joint space.
+/// The Revision 3 signs make the forearm point forward and tool point down.
 void test_fk_home_position(void) {
     const float h = kPi / 2.0f;
     auto fk = Kinematics::solveFK(0.0f, h, h, h);
@@ -576,12 +555,12 @@ void test_fk_home_position(void) {
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 0.0f,  fk.elbow_2d.r);
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 27.0f, fk.elbow_2d.z);
 
-    // φ12 = π → L2 points backward → wrist at (-12, 27)
-    TEST_ASSERT_FLOAT_WITHIN(kDistTol, -12.0f, fk.wrist_2d.r);
+    // The elbow sign maps θ2=90° to geometric -90°, so L2 points forward.
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 12.0f, fk.wrist_2d.r);
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 27.0f,  fk.wrist_2d.z);
 
-    // φ123 = 3π/2 → L3 points straight down → effector at (-12, 19)
-    TEST_ASSERT_FLOAT_WITHIN(kDistTol, -12.0f, fk.effector_2d.r);
+    // The wrist sign maps θ3=90° to geometric -90°, so L3 points down.
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 12.0f, fk.effector_2d.r);
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 19.0f,  fk.effector_2d.z);
 }
 
@@ -657,7 +636,7 @@ int main(int argc, char** argv) {
     // IK — reachability & correctness
     RUN_TEST(test_ik_rejects_non_finite_inputs);
     RUN_TEST(test_ik_huge_finite_input_has_finite_outputs);
-    RUN_TEST(test_ik_soft_limit_tolerance_clamps_wrist);
+    RUN_TEST(test_ik_soft_limit_tolerance_clamps_joint_angles);
     RUN_TEST(test_ik_soft_limit_outside_tolerance_is_rejected);
     RUN_TEST(test_ik_full_extension_is_stable_and_in_limits);
     RUN_TEST(test_ik_near_max_reach_matches_double_precision_reference);
@@ -668,7 +647,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_ik_base_angle_negative_y);
 
     // IK — posture validation
-    RUN_TEST(test_ik_elbow_up_limit_violation);
+    RUN_TEST(test_ik_elbow_down_limit_violation);
     RUN_TEST(test_ik_both_postures_always_populated);
 
     // IK — derivation steps (educational panel)
