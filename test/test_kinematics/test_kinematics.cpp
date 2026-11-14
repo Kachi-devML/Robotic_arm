@@ -116,6 +116,35 @@ void assertValidAnglesWithinLimits(const Kinematics::IKResult& result) {
     }
 }
 
+void assertPostureRoundTrips(const Kinematics::IKInput& input,
+                            const Kinematics::PostureSolution& posture) {
+    TEST_ASSERT_TRUE(posture.valid);
+    TEST_ASSERT_TRUE(Kinematics::checkJointLimits(
+        posture.theta0, posture.theta1, posture.theta2, posture.theta3));
+
+    const auto fk = Kinematics::solveFK(
+        posture.theta0, posture.theta1, posture.theta2, posture.theta3);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, input.x, fk.effector_3d.x);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, input.y, fk.effector_3d.y);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, input.z, fk.effector_3d.z);
+}
+
+void assertAllValidPosturesRoundTrip(const Kinematics::IKInput& input,
+                                     const Kinematics::IKResult& result) {
+    bool foundValidPosture = false;
+    if (result.elbow_up.valid) {
+        foundValidPosture = true;
+        assertPostureRoundTrips(input, result.elbow_up);
+    }
+    if (result.elbow_down.valid) {
+        foundValidPosture = true;
+        assertPostureRoundTrips(input, result.elbow_down);
+    }
+    TEST_ASSERT_TRUE_MESSAGE(foundValidPosture,
+                             "expected at least one valid posture");
+    assertValidAnglesWithinLimits(result);
+}
+
 void test_joint_angle_mapping_and_inverse(void) {
     const Kinematics::PostureSolution geometric = {
         deg(35.0f), deg(90.0f), deg(120.0f), deg(240.0f),
@@ -224,6 +253,61 @@ void test_ik_full_extension_is_stable_and_in_limits(void) {
     TEST_ASSERT_TRUE(result.elbow_down.valid);
     TEST_ASSERT_TRUE(allNumericFieldsFinite(result));
     assertValidAnglesWithinLimits(result);
+}
+
+void test_ik_revision3_g1(void) {
+    const Kinematics::IKInput input = {20.0f, 0.0f, 27.0f, 0.0f};
+    const auto result = Kinematics::solveIK(input);
+
+    TEST_ASSERT_TRUE(result.reachable);
+    TEST_ASSERT_TRUE(result.elbow_up.valid);
+    TEST_ASSERT_FALSE(result.elbow_down.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
+                      result.elbow_down.error);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, 0.0f, result.elbow_up.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, deg(90.0f), result.elbow_up.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, deg(90.0f), result.elbow_up.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, 0.0f, result.elbow_up.theta3);
+    assertAllValidPosturesRoundTrip(input, result);
+}
+
+void test_ik_revision3_g2(void) {
+    const Kinematics::IKInput input = {35.0f, 0.0f, 12.0f, 0.0f};
+    const auto result = Kinematics::solveIK(input);
+
+    TEST_ASSERT_TRUE(result.reachable);
+    TEST_ASSERT_TRUE(result.elbow_up.valid);
+    TEST_ASSERT_TRUE(result.elbow_down.valid);
+    const Kinematics::PostureSolution* postures[] = {
+        &result.elbow_up, &result.elbow_down,
+    };
+    for (const auto* posture : postures) {
+        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, 0.0f, posture->theta0);
+        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, 0.0f, posture->theta1);
+        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, 0.0f, posture->theta2);
+        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, 0.0f, posture->theta3);
+        assertPostureRoundTrips(input, *posture);
+    }
+}
+
+void test_ik_revision3_g3(void) {
+    const Kinematics::IKInput input = {20.0f, 5.0f, 15.0f, deg(-90.0f)};
+    const auto result = Kinematics::solveIK(input);
+
+    TEST_ASSERT_TRUE(result.reachable);
+    TEST_ASSERT_TRUE(result.elbow_up.valid);
+    TEST_ASSERT_FALSE(result.elbow_down.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
+                      result.elbow_down.error);
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 14.04f,
+                             JointLimits::radToDeg(result.elbow_up.theta0));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 54.65f,
+                             JointLimits::radToDeg(result.elbow_up.theta1));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 60.55f,
+                             JointLimits::radToDeg(result.elbow_up.theta2));
+    TEST_ASSERT_FLOAT_WITHIN(0.02f, 84.10f,
+                             JointLimits::radToDeg(result.elbow_up.theta3));
+    assertAllValidPosturesRoundTrip(input, result);
 }
 
 void test_ik_near_max_reach_matches_double_precision_reference(void) {
@@ -355,11 +439,8 @@ void test_ik_base_angle_negative_y(void) {
 //  IK — both postures and joint-limit post-check
 // ====================================================================
 
-/// For any non-degenerate reachable case the elbow-down θ2 is positive and
-/// the elbow-up θ2 is the negation — outside the [0, π] servo range.
-/// This is expected hardware behaviour: with 0–180° servos the elbow-up
-/// configuration is mechanically impossible, so the post-check correctly
-/// marks it JOINT_LIMIT_EXCEEDED.
+/// With this mapping, elbow_down usually maps positive geometric θ2 to a
+/// negative joint angle, so it is almost never valid except near extension.
 void test_ik_elbow_down_limit_violation(void) {
     const float t0 = 0.0f;
     const float t1 = deg(30.0f);
@@ -415,10 +496,8 @@ void test_ik_derivation_steps_unreachable(void) {
     auto r = Kinematics::solveIK(in);
 
     TEST_ASSERT_FALSE(r.reachable);
-    // Steps up to and including wrist_dist (7 steps), but no per-posture
-    // angle steps (which would add 7 more).
-    TEST_ASSERT_TRUE(r.step_count >= 7);
-    TEST_ASSERT_TRUE(r.step_count < 14);
+    // Exactly the seven shared derivation steps precede posture calculations.
+    TEST_ASSERT_EQUAL_UINT8(7, r.step_count);
 }
 
 // ====================================================================
@@ -426,7 +505,7 @@ void test_ik_derivation_steps_unreachable(void) {
 // ====================================================================
 
 /// Pick known joint angles → FK to get effector position → IK back →
-/// verify the elbow-down solution recovers the original angles.
+/// verify the elbow-up solution recovers the original angles.
 void test_ik_fk_roundtrip_simple(void) {
     const float t0 = 0.0f;
     const float t1 = deg(30.0f);   // π/6
@@ -563,6 +642,15 @@ void test_fk_home_position(void) {
     // The wrist sign maps θ3=90° to geometric -90°, so L3 points down.
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 12.0f, fk.effector_2d.r);
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 19.0f,  fk.effector_2d.z);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 0.0f, fk.elbow_3d.x);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 0.0f, fk.elbow_3d.y);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 27.0f, fk.elbow_3d.z);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 12.0f, fk.wrist_3d.x);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 0.0f, fk.wrist_3d.y);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 27.0f, fk.wrist_3d.z);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 12.0f, fk.effector_3d.x);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 0.0f, fk.effector_3d.y);
+    TEST_ASSERT_FLOAT_WITHIN(kDistTol, 19.0f, fk.effector_3d.z);
 }
 
 /// 3D rotation: θ0=90° should rotate the r-component into the y-axis.
@@ -640,6 +728,9 @@ int main(int argc, char** argv) {
     RUN_TEST(test_ik_soft_limit_tolerance_clamps_joint_angles);
     RUN_TEST(test_ik_soft_limit_outside_tolerance_is_rejected);
     RUN_TEST(test_ik_full_extension_is_stable_and_in_limits);
+    RUN_TEST(test_ik_revision3_g1);
+    RUN_TEST(test_ik_revision3_g2);
+    RUN_TEST(test_ik_revision3_g3);
     RUN_TEST(test_ik_near_max_reach_matches_double_precision_reference);
     RUN_TEST(test_ik_full_extension_forward);
     RUN_TEST(test_ik_unreachable_too_far);
