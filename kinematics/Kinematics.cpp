@@ -22,23 +22,55 @@ void addStep(IKResult& result,
     }
 }
 
+bool withinSoftLimitTolerance(float angle, float min, float max, float tolerance) {
+    return angle >= min - tolerance && angle <= max + tolerance;
+}
+
+float clampToSoftLimit(float angle, float min, float max) {
+    return std::fmax(min, std::fmin(max, angle));
+}
+
 /// Post-check: validate a single posture's angles against JointLimits.
 /// Marks the posture invalid with JOINT_LIMIT_EXCEEDED if any angle is
 /// outside its soft range.
 void validatePosture(PostureSolution& posture) {
     if (!posture.valid) return;  // already invalid (e.g. unreachable)
 
-    if (posture.theta0 < JointLimits::kTheta0SoftMin_rad ||
-        posture.theta0 > JointLimits::kTheta0SoftMax_rad ||
-        posture.theta1 < JointLimits::kTheta1Min_rad     ||
-        posture.theta1 > JointLimits::kTheta1Max_rad     ||
-        posture.theta2 < JointLimits::kTheta2Min_rad     ||
-        posture.theta2 > JointLimits::kTheta2Max_rad     ||
-        posture.theta3 < JointLimits::kTheta3Min_rad     ||
-        posture.theta3 > JointLimits::kTheta3Max_rad) {
+    const float tolerance =
+        JointLimits::degToRad(JointLimits::kSoftLimitTolerance_deg);
+    if (!withinSoftLimitTolerance(posture.theta0,
+                                  JointLimits::kTheta0SoftMin_rad,
+                                  JointLimits::kTheta0SoftMax_rad,
+                                  tolerance) ||
+        !withinSoftLimitTolerance(posture.theta1,
+                                  JointLimits::kTheta1Min_rad,
+                                  JointLimits::kTheta1Max_rad,
+                                  tolerance) ||
+        !withinSoftLimitTolerance(posture.theta2,
+                                  JointLimits::kTheta2Min_rad,
+                                  JointLimits::kTheta2Max_rad,
+                                  tolerance) ||
+        !withinSoftLimitTolerance(posture.theta3,
+                                  JointLimits::kTheta3Min_rad,
+                                  JointLimits::kTheta3Max_rad,
+                                  tolerance)) {
         posture.valid = false;
         posture.error = ErrorCode::JOINT_LIMIT_EXCEEDED;
+        return;
     }
+
+    posture.theta0 = clampToSoftLimit(posture.theta0,
+                                      JointLimits::kTheta0SoftMin_rad,
+                                      JointLimits::kTheta0SoftMax_rad);
+    posture.theta1 = clampToSoftLimit(posture.theta1,
+                                      JointLimits::kTheta1Min_rad,
+                                      JointLimits::kTheta1Max_rad);
+    posture.theta2 = clampToSoftLimit(posture.theta2,
+                                      JointLimits::kTheta2Min_rad,
+                                      JointLimits::kTheta2Max_rad);
+    posture.theta3 = clampToSoftLimit(posture.theta3,
+                                      JointLimits::kTheta3Min_rad,
+                                      JointLimits::kTheta3Max_rad);
 }
 
 }  // anonymous namespace

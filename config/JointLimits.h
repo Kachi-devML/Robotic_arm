@@ -14,6 +14,9 @@ constexpr float kRadToDeg = 180.0f / kPi;
 constexpr float degToRad(float deg) { return deg * kDegToRad; }
 constexpr float radToDeg(float rad) { return rad * kRadToDeg; }
 
+// IK solutions within this margin are accepted and clamped to the soft limit.
+constexpr float kSoftLimitTolerance_deg = 0.5f;
+
 // Mechanical links (cm). Targets (x, y, z) are fingertip position, not wrist center.
 constexpr float kL1_cm = 15.0f;  // shoulder → elbow
 constexpr float kL2_cm = 12.0f;  // elbow → wrist

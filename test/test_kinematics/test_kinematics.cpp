@@ -80,6 +80,24 @@ void assertInvalidInputResult(const Kinematics::IKResult& result) {
     }
 }
 
+void assertValidAnglesWithinLimits(const Kinematics::IKResult& result) {
+    const Kinematics::PostureSolution* postures[] = {
+        &result.elbow_up,
+        &result.elbow_down,
+    };
+    for (const auto* posture : postures) {
+        if (!posture->valid) continue;
+        TEST_ASSERT_TRUE(posture->theta0 >= JointLimits::kTheta0SoftMin_rad);
+        TEST_ASSERT_TRUE(posture->theta0 <= JointLimits::kTheta0SoftMax_rad);
+        TEST_ASSERT_TRUE(posture->theta1 >= JointLimits::kTheta1Min_rad);
+        TEST_ASSERT_TRUE(posture->theta1 <= JointLimits::kTheta1Max_rad);
+        TEST_ASSERT_TRUE(posture->theta2 >= JointLimits::kTheta2Min_rad);
+        TEST_ASSERT_TRUE(posture->theta2 <= JointLimits::kTheta2Max_rad);
+        TEST_ASSERT_TRUE(posture->theta3 >= JointLimits::kTheta3Min_rad);
+        TEST_ASSERT_TRUE(posture->theta3 <= JointLimits::kTheta3Max_rad);
+    }
+}
+
 // ====================================================================
 //  IK — basic reachability and correctness
 // ====================================================================
@@ -112,6 +130,72 @@ void test_ik_huge_finite_input_has_finite_outputs(void) {
 
     TEST_ASSERT_FALSE(result.reachable);
     TEST_ASSERT_TRUE(allNumericFieldsFinite(result));
+}
+
+void test_ik_soft_limit_tolerance_clamps_wrist(void) {
+    const float t0 = 0.0f;
+    const float t1 = deg(30.0f);
+    const float t2 = deg(45.0f);
+    const struct {
+        float requested;
+        float clamped;
+    } cases[] = {
+        {deg(-0.25f), JointLimits::kTheta3Min_rad},
+        {deg(180.25f), JointLimits::kTheta3Max_rad},
+    };
+
+    for (const auto& testCase : cases) {
+        const float t3 = testCase.requested;
+        const auto fk = Kinematics::solveFK(t0, t1, t2, t3);
+        const Kinematics::IKInput input = {
+            fk.effector_3d.x,
+            fk.effector_3d.y,
+            fk.effector_3d.z,
+            t1 + t2 + t3,
+        };
+        const auto result = Kinematics::solveIK(input);
+
+        TEST_ASSERT_TRUE(result.elbow_down.valid);
+        TEST_ASSERT_EQUAL(Kinematics::ErrorCode::NONE, result.elbow_down.error);
+        TEST_ASSERT_TRUE(result.elbow_down.theta3 >= JointLimits::kTheta3Min_rad);
+        TEST_ASSERT_TRUE(result.elbow_down.theta3 <= JointLimits::kTheta3Max_rad);
+        TEST_ASSERT_FLOAT_WITHIN(kAngleTol, testCase.clamped,
+                                 result.elbow_down.theta3);
+        assertValidAnglesWithinLimits(result);
+    }
+}
+
+void test_ik_soft_limit_outside_tolerance_is_rejected(void) {
+    const float t0 = 0.0f;
+    const float t1 = deg(30.0f);
+    const float t2 = deg(45.0f);
+    const float outOfToleranceWristAngles[] = {deg(-0.6f), deg(180.6f)};
+
+    for (const float t3 : outOfToleranceWristAngles) {
+        const auto fk = Kinematics::solveFK(t0, t1, t2, t3);
+        const Kinematics::IKInput input = {
+            fk.effector_3d.x,
+            fk.effector_3d.y,
+            fk.effector_3d.z,
+            t1 + t2 + t3,
+        };
+        const auto result = Kinematics::solveIK(input);
+
+        TEST_ASSERT_FALSE(result.elbow_down.valid);
+        TEST_ASSERT_EQUAL(Kinematics::ErrorCode::JOINT_LIMIT_EXCEEDED,
+                          result.elbow_down.error);
+    }
+}
+
+void test_ik_full_extension_is_stable_and_in_limits(void) {
+    const Kinematics::IKInput input = {35.0f, 0.0f, 12.0f, 0.0f};
+    const auto result = Kinematics::solveIK(input);
+
+    TEST_ASSERT_TRUE(result.reachable);
+    TEST_ASSERT_TRUE(result.elbow_up.valid);
+    TEST_ASSERT_TRUE(result.elbow_down.valid);
+    TEST_ASSERT_TRUE(allNumericFieldsFinite(result));
+    assertValidAnglesWithinLimits(result);
 }
 
 /// Full extension forward at shoulder height.
@@ -500,6 +584,9 @@ int main(int argc, char** argv) {
     // IK — reachability & correctness
     RUN_TEST(test_ik_rejects_non_finite_inputs);
     RUN_TEST(test_ik_huge_finite_input_has_finite_outputs);
+    RUN_TEST(test_ik_soft_limit_tolerance_clamps_wrist);
+    RUN_TEST(test_ik_soft_limit_outside_tolerance_is_rejected);
+    RUN_TEST(test_ik_full_extension_is_stable_and_in_limits);
     RUN_TEST(test_ik_full_extension_forward);
     RUN_TEST(test_ik_unreachable_too_far);
     RUN_TEST(test_ik_unreachable_too_close);
