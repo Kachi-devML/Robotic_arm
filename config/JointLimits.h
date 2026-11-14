@@ -17,6 +17,10 @@ constexpr float radToDeg(float rad) { return rad * kRadToDeg; }
 // IK solutions within this margin are accepted and clamped to the soft limit.
 constexpr float kSoftLimitTolerance_deg = 0.5f;
 
+// Revision 3 §3.6: map elbow and wrist IK angles to joint angles.
+constexpr float kElbowSign = -1.0f;
+constexpr float kWristSign = -1.0f;
+
 // Mechanical links (cm). Targets (x, y, z) are fingertip position, not wrist center.
 constexpr float kL1_cm = 15.0f;  // shoulder → elbow
 constexpr float kL2_cm = 12.0f;  // elbow → wrist
