@@ -401,6 +401,7 @@ void test_ik_derivation_steps_reachable(void) {
     // First step must be the base twist
     TEST_ASSERT_EQUAL_STRING("base_twist", r.steps[0].label);
     TEST_ASSERT_NOT_NULL(r.steps[0].expression);
+    TEST_ASSERT_EQUAL_STRING("planar_reduction", r.steps[1].label);
 
     // Last step should be theta3_up
     TEST_ASSERT_EQUAL_STRING("theta3_up",

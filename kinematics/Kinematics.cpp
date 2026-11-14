@@ -138,7 +138,7 @@ IKResult solveIK(const IKInput& input) {
     // Step 2 — Reduce to the arm plane
     // ================================================================
     const float r = std::hypot(input.x, input.y);
-    addStep(result, "planar_r",
+    addStep(result, "planar_reduction",
             "r = \xE2\x88\x9A(x\xC2\xB2 + y\xC2\xB2)", r);  // √(x² + y²)
 
     const float z_prime = input.z - d1;
