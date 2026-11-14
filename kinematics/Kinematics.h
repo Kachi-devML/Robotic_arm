@@ -115,6 +115,8 @@ IKResult solveIK(const IKInput& input);
 /// Solve forward kinematics: given joint angles, compute all joint positions.
 ///
 /// Used for the 2D canvas visualizer and for round-trip IK verification.
+/// Angles are in joint space; elbow and wrist are mapped back to geometric
+/// angles internally before evaluating the link geometry.
 ///
 /// @param theta0  Base twist (rad).
 /// @param theta1  Shoulder angle (rad).
@@ -122,6 +124,12 @@ IKResult solveIK(const IKInput& input);
 /// @param theta3  Wrist angle (rad).
 /// @return        Joint positions in 2D arm plane and 3D Cartesian.
 FKResult solveFK(float theta0, float theta1, float theta2, float theta3);
+
+/// Convert geometric IK angles to joint-space angles using the Revision 3 map.
+PostureSolution mapIkToJointAngles(const PostureSolution& geometricAngles);
+
+/// Convert joint-space angles back to the equivalent geometric angles.
+PostureSolution mapJointToGeometricAngles(const PostureSolution& jointAngles);
 
 /// Check whether a set of joint angles falls within the soft limits
 /// defined in JointLimits.h.

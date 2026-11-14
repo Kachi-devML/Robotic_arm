@@ -30,6 +30,17 @@ float clampToSoftLimit(float angle, float min, float max) {
     return std::fmax(min, std::fmin(max, angle));
 }
 
+float wrapRadians(float angle) {
+    const float twoPi = 2.0f * JointLimits::kPi;
+    float wrapped = std::fmod(angle, twoPi);
+    if (wrapped <= -JointLimits::kPi) {
+        wrapped += twoPi;
+    } else if (wrapped > JointLimits::kPi) {
+        wrapped -= twoPi;
+    }
+    return wrapped;
+}
+
 /// Post-check: validate a single posture's angles against JointLimits.
 /// Marks the posture invalid with JOINT_LIMIT_EXCEEDED if any angle is
 /// outside its soft range.
@@ -76,6 +87,24 @@ void validatePosture(PostureSolution& posture) {
 }  // anonymous namespace
 
 // ---------- Public API ----------
+
+PostureSolution mapIkToJointAngles(const PostureSolution& geometricAngles) {
+    PostureSolution jointAngles = geometricAngles;
+    jointAngles.theta2 = wrapRadians(JointLimits::kElbowSign *
+                                     geometricAngles.theta2);
+    jointAngles.theta3 = wrapRadians(JointLimits::kWristSign *
+                                     geometricAngles.theta3);
+    return jointAngles;
+}
+
+PostureSolution mapJointToGeometricAngles(const PostureSolution& jointAngles) {
+    PostureSolution geometricAngles = jointAngles;
+    geometricAngles.theta2 = wrapRadians(JointLimits::kElbowSign *
+                                         jointAngles.theta2);
+    geometricAngles.theta3 = wrapRadians(JointLimits::kWristSign *
+                                         jointAngles.theta3);
+    return geometricAngles;
+}
 
 IKResult solveIK(const IKInput& input) {
     IKResult result = {};

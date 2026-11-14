@@ -98,6 +98,29 @@ void assertValidAnglesWithinLimits(const Kinematics::IKResult& result) {
     }
 }
 
+void test_joint_angle_mapping_and_inverse(void) {
+    const Kinematics::PostureSolution geometric = {
+        deg(35.0f), deg(90.0f), deg(120.0f), deg(240.0f),
+        true, Kinematics::ErrorCode::NONE,
+    };
+    const auto joint = Kinematics::mapIkToJointAngles(geometric);
+
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, geometric.theta0, joint.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, geometric.theta1, joint.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, deg(-120.0f), joint.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, deg(120.0f), joint.theta3);
+    TEST_ASSERT_TRUE(joint.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::NONE, joint.error);
+
+    const auto recovered = Kinematics::mapJointToGeometricAngles(joint);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, geometric.theta0, recovered.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, geometric.theta1, recovered.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, deg(120.0f), recovered.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(kAngleTol, deg(-120.0f), recovered.theta3);
+    TEST_ASSERT_TRUE(recovered.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::NONE, recovered.error);
+}
+
 // ====================================================================
 //  IK — basic reachability and correctness
 // ====================================================================
@@ -628,6 +651,8 @@ int main(int argc, char** argv) {
     (void)argv;
 
     UNITY_BEGIN();
+
+    RUN_TEST(test_joint_angle_mapping_and_inverse);
 
     // IK — reachability & correctness
     RUN_TEST(test_ik_rejects_non_finite_inputs);
