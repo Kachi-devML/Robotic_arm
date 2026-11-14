@@ -10,6 +10,7 @@
 #include <unity.h>
 
 #include <cmath>
+#include <limits>
 
 #include "JointLimits.h"
 #include "Kinematics.h"
@@ -28,9 +29,90 @@ static constexpr float deg(float d) { return JointLimits::degToRad(d); }
 void setUp(void) {}
 void tearDown(void) {}
 
+bool allNumericFieldsFinite(const Kinematics::IKResult& result) {
+    if (!std::isfinite(result.input.x) || !std::isfinite(result.input.y) ||
+        !std::isfinite(result.input.z) || !std::isfinite(result.input.phi) ||
+        !std::isfinite(result.elbow_up.theta0) ||
+        !std::isfinite(result.elbow_up.theta1) ||
+        !std::isfinite(result.elbow_up.theta2) ||
+        !std::isfinite(result.elbow_up.theta3) ||
+        !std::isfinite(result.elbow_down.theta0) ||
+        !std::isfinite(result.elbow_down.theta1) ||
+        !std::isfinite(result.elbow_down.theta2) ||
+        !std::isfinite(result.elbow_down.theta3) ||
+        !std::isfinite(result.dw) || !std::isfinite(result.dw_min) ||
+        !std::isfinite(result.dw_max)) {
+        return false;
+    }
+    for (const auto& step : result.steps) {
+        if (!std::isfinite(step.value)) return false;
+    }
+    return true;
+}
+
+void assertInvalidInputResult(const Kinematics::IKResult& result) {
+    TEST_ASSERT_FALSE(result.reachable);
+    TEST_ASSERT_FALSE(result.elbow_up.valid);
+    TEST_ASSERT_FALSE(result.elbow_down.valid);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::INVALID_INPUT, result.elbow_up.error);
+    TEST_ASSERT_EQUAL(Kinematics::ErrorCode::INVALID_INPUT, result.elbow_down.error);
+    TEST_ASSERT_EQUAL_UINT8(0, result.step_count);
+    TEST_ASSERT_TRUE(allNumericFieldsFinite(result));
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.input.x);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.input.y);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.input.z);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.input.phi);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_up.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_up.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_up.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_up.theta3);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_down.theta0);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_down.theta1);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_down.theta2);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.elbow_down.theta3);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.dw);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.dw_min);
+    TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, result.dw_max);
+    for (const auto& step : result.steps) {
+        TEST_ASSERT_FLOAT_WITHIN(0.0f, 0.0f, step.value);
+        TEST_ASSERT_NULL(step.label);
+        TEST_ASSERT_NULL(step.expression);
+    }
+}
+
 // ====================================================================
 //  IK — basic reachability and correctness
 // ====================================================================
+
+void test_ik_rejects_non_finite_inputs(void) {
+    const float nonFiniteValues[] = {
+        std::numeric_limits<float>::quiet_NaN(),
+        std::numeric_limits<float>::infinity(),
+        -std::numeric_limits<float>::infinity(),
+    };
+    float Kinematics::IKInput::* const fields[] = {
+        &Kinematics::IKInput::x,
+        &Kinematics::IKInput::y,
+        &Kinematics::IKInput::z,
+        &Kinematics::IKInput::phi,
+    };
+
+    for (const auto field : fields) {
+        for (const float value : nonFiniteValues) {
+            Kinematics::IKInput input = {20.0f, 0.0f, 15.0f, 0.0f};
+            input.*field = value;
+            assertInvalidInputResult(Kinematics::solveIK(input));
+        }
+    }
+}
+
+void test_ik_huge_finite_input_has_finite_outputs(void) {
+    const Kinematics::IKInput input = {1.0e30f, 0.0f, 12.0f, 0.0f};
+    const auto result = Kinematics::solveIK(input);
+
+    TEST_ASSERT_FALSE(result.reachable);
+    TEST_ASSERT_TRUE(allNumericFieldsFinite(result));
+}
 
 /// Full extension forward at shoulder height.
 /// All joints at 0 rad, arm stretched straight out.
@@ -416,6 +498,8 @@ int main(int argc, char** argv) {
     UNITY_BEGIN();
 
     // IK — reachability & correctness
+    RUN_TEST(test_ik_rejects_non_finite_inputs);
+    RUN_TEST(test_ik_huge_finite_input_has_finite_outputs);
     RUN_TEST(test_ik_full_extension_forward);
     RUN_TEST(test_ik_unreachable_too_far);
     RUN_TEST(test_ik_unreachable_too_close);

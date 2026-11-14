@@ -3,6 +3,7 @@
 #include "JointLimits.h"
 
 #include <cmath>
+#include <limits>
 
 namespace Kinematics {
 
@@ -46,6 +47,14 @@ void validatePosture(PostureSolution& posture) {
 
 IKResult solveIK(const IKInput& input) {
     IKResult result = {};
+    if (!std::isfinite(input.x) || !std::isfinite(input.y) ||
+        !std::isfinite(input.z) || !std::isfinite(input.phi)) {
+        result.elbow_up = {0.0f, 0.0f, 0.0f, 0.0f, false,
+                           ErrorCode::INVALID_INPUT};
+        result.elbow_down = result.elbow_up;
+        return result;
+    }
+
     result.input = input;
     result.step_count = 0;
 
@@ -67,7 +76,7 @@ IKResult solveIK(const IKInput& input) {
     // ================================================================
     // Step 2 — Reduce to the arm plane
     // ================================================================
-    const float r = std::sqrt(input.x * input.x + input.y * input.y);
+    const float r = std::hypot(input.x, input.y);
     addStep(result, "planar_r",
             "r = \xE2\x88\x9A(x\xC2\xB2 + y\xC2\xB2)", r);  // √(x² + y²)
 
@@ -89,11 +98,14 @@ IKResult solveIK(const IKInput& input) {
     // ================================================================
     // Step 4 — 2-link solve for the wrist center
     // ================================================================
-    const float Dw_sq = rw * rw + zw * zw;
+    const float Dw = std::hypot(rw, zw);
+    const float maxDwBeforeSquare = std::sqrt(std::numeric_limits<float>::max());
+    const float Dw_sq = Dw > maxDwBeforeSquare
+        ? std::numeric_limits<float>::max()
+        : Dw * Dw;
     addStep(result, "wrist_dist_sq",
             "Dw\xC2\xB2 = rw\xC2\xB2 + zw\xC2\xB2", Dw_sq);
 
-    const float Dw = std::sqrt(Dw_sq);
     result.dw = Dw;
     addStep(result, "wrist_dist",
             "Dw = \xE2\x88\x9A(Dw\xC2\xB2)", Dw);

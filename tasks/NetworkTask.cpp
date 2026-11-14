@@ -249,6 +249,11 @@ void NetworkTask::publishIkSolution(const Kinematics::IKResult& ik) {
     if (!gInitialized.load(std::memory_order_acquire)) {
         return;
     }
+    if (ik.elbow_up.error == Kinematics::ErrorCode::INVALID_INPUT ||
+        ik.elbow_down.error == Kinematics::ErrorCode::INVALID_INPUT) {
+        publishError("INVALID_INPUT", "IK inputs must be finite numbers");
+        return;
+    }
     SocketGuard socketGuard;
     if (!socketGuard.locked()) {
         return;
@@ -380,6 +385,11 @@ void NetworkTask::handleMoveCommand(const String& message) {
     ikInput.phi = JointLimits::degToRad(cmd.phi);
 
     const Kinematics::IKResult ik = Kinematics::solveIK(ikInput);
+
+    if (ik.elbow_up.error == Kinematics::ErrorCode::INVALID_INPUT) {
+        publishError("INVALID_INPUT", "IK inputs must be finite numbers");
+        return;
+    }
 
     // Always broadcast the IK solution so the web app can visualize both
     // postures and the step-by-step derivation (spec §3.4, §7.3)

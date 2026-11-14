@@ -29,6 +29,7 @@ enum class ErrorCode : uint8_t {
     NONE = 0,
     TARGET_UNREACHABLE,
     JOINT_LIMIT_EXCEEDED,
+    INVALID_INPUT,
 };
 
 /// One candidate IK posture (elbow-up or elbow-down).
