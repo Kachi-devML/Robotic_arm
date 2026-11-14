@@ -198,6 +198,54 @@ void test_ik_full_extension_is_stable_and_in_limits(void) {
     assertValidAnglesWithinLimits(result);
 }
 
+void test_ik_near_max_reach_matches_double_precision_reference(void) {
+    // Float conditioning near cos(theta2) = 1.
+    const double dwTarget = 27.0 - 1.0e-4;
+    const double phi = static_cast<double>(deg(90.0f));
+    const double wristCenterAngle = JointLimits::degToRad(30.0);
+    const double l1 = JointLimits::kL1_cm;
+    const double l2 = JointLimits::kL2_cm;
+    const double l3 = JointLimits::kL3_cm;
+    const double d1 = JointLimits::kD1_cm;
+    const Kinematics::IKInput input = {
+        static_cast<float>(dwTarget * std::cos(wristCenterAngle) +
+                           l3 * std::cos(phi)),
+        0.0f,
+        static_cast<float>(d1 + dwTarget * std::sin(wristCenterAngle) +
+                           l3 * std::sin(phi)),
+        static_cast<float>(phi),
+    };
+    const auto result = Kinematics::solveIK(input);
+
+    const double rw = static_cast<double>(input.x) - l3 * std::cos(input.phi);
+    const double zw = static_cast<double>(input.z) - d1 -
+                      l3 * std::sin(input.phi);
+    const double dw = std::hypot(rw, zw);
+    const double cosTheta2 =
+        (dw * dw - l1 * l1 - l2 * l2) / (2.0 * l1 * l2);
+    const double theta2 = std::acos(cosTheta2);
+    const double theta1 = std::atan2(zw, rw) -
+        std::atan2(l2 * std::sin(theta2), l1 + l2 * std::cos(theta2));
+    const double theta0 = 0.0;
+    const double theta3 = static_cast<double>(input.phi) - theta1 - theta2;
+    const auto& solution = result.elbow_down;
+
+    TEST_ASSERT_TRUE(result.reachable);
+    TEST_ASSERT_TRUE(solution.valid);
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.005f, static_cast<float>(theta0 * 180.0 / JointLimits::kPi),
+        JointLimits::radToDeg(solution.theta0));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.005f, static_cast<float>(theta1 * 180.0 / JointLimits::kPi),
+        JointLimits::radToDeg(solution.theta1));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.005f, static_cast<float>(theta2 * 180.0 / JointLimits::kPi),
+        JointLimits::radToDeg(solution.theta2));
+    TEST_ASSERT_FLOAT_WITHIN(
+        0.005f, static_cast<float>(theta3 * 180.0 / JointLimits::kPi),
+        JointLimits::radToDeg(solution.theta3));
+}
+
 /// Full extension forward at shoulder height.
 /// All joints at 0 rad, arm stretched straight out.
 /// Both postures collapse to the same singular solution.
@@ -587,6 +635,7 @@ int main(int argc, char** argv) {
     RUN_TEST(test_ik_soft_limit_tolerance_clamps_wrist);
     RUN_TEST(test_ik_soft_limit_outside_tolerance_is_rejected);
     RUN_TEST(test_ik_full_extension_is_stable_and_in_limits);
+    RUN_TEST(test_ik_near_max_reach_matches_double_precision_reference);
     RUN_TEST(test_ik_full_extension_forward);
     RUN_TEST(test_ik_unreachable_too_far);
     RUN_TEST(test_ik_unreachable_too_close);
