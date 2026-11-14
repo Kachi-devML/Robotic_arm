@@ -29,8 +29,9 @@
     const links = limits.links;
     const radians = Math.PI / 180;
     const theta1 = posture.theta1 * radians;
-    const theta2 = posture.theta2 * radians;
-    const theta3 = posture.theta3 * radians;
+    // Revision 3 §3.6: the diagram sums geometric, not joint-space, angles.
+    const theta2 = -posture.theta2 * radians;
+    const theta3 = -posture.theta3 * radians;
     const shoulder = { r: 0, z: links.shoulder_height_cm };
     const elbow = {
       r: links.l1_cm * Math.cos(theta1),
