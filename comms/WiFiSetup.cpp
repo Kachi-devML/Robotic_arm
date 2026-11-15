@@ -10,11 +10,14 @@ void WiFiSetup::begin(const char* apName, const char* apPassword) {
     WiFi.setSleep(false);
     WiFiManager manager;
     manager.setConfigPortalTimeout(180);
-    manager.setDebugOutput(false);
+    manager.setDebugOutput(true);          // was false: prints WiFiManager's connection log
     manager.setAPCallback(nullptr);
 
     const bool connected = manager.autoConnect(apName, apPassword);
-    (void)connected;
+
+    Serial.printf("WiFi connected: %d, status: %d, SSID: %s, IP: %s\n",
+                  connected, WiFi.status(), WiFi.SSID().c_str(),
+                  WiFi.localIP().toString().c_str());
 }
 
 bool WiFiSetup::connect() {
