@@ -21,9 +21,7 @@ constexpr uint8_t kNemaM0 = 13;
 constexpr uint8_t kNemaM1 = 14;
 constexpr uint8_t kNemaM2 = 15;
 
-// SS-5GL via 10 kΩ external pull-up to 3V3. Firmware must not enable the internal pull-up.
-// Released = HIGH. Pressed (switch to GND) = LOW = home trigger.
-constexpr uint8_t kHomeSw = 16;
+// GPIO16 is unassigned and available for future use.
 
 // Hardware e-stop: N.C. to GND, 10 kΩ external pull-up to 3V3.
 // LOW  = safe / idle (closed circuit)

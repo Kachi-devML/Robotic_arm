@@ -14,7 +14,6 @@ static_assert(Pins::kNemaEn == 12);
 static_assert(Pins::kNemaM0 == 13);
 static_assert(Pins::kNemaM1 == 14);
 static_assert(Pins::kNemaM2 == 15);
-static_assert(Pins::kHomeSw == 16);
 static_assert(Pins::kEstopSw == 17);
 static_assert(Pins::kServoShoulderPwm == 4);
 static_assert(Pins::kServoElbowPwm == 5);

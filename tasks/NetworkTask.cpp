@@ -204,7 +204,6 @@ void NetworkTask::taskEntry(void* /*param*/) {
 }
 
 void NetworkTask::publishState(const char* state,
-                               bool homed,
                                const char* payloadProfile,
                                const char* gripper) {
     if (!gInitialized.load(std::memory_order_acquire)) {
@@ -214,8 +213,8 @@ void NetworkTask::publishState(const char* state,
     if (!socketGuard.locked()) {
         return;
     }
-    gHttpServer.setStatusPayload(state, homed);
-    gSocket.sendStateUpdate(state, homed, payloadProfile, gripper);
+    gHttpServer.setStatusPayload(state);
+    gSocket.sendStateUpdate(state, payloadProfile, gripper);
 }
 
 void NetworkTask::publishError(const char* code, const char* message) {
@@ -362,11 +361,10 @@ void NetworkTask::handleMoveCommand(const String& message) {
 
     const bool recoveringCommandError =
         gStateMachine->state() == Control::SystemState::Error &&
-        gStateMachine->homed() && !gStateMachine->estopLatched() &&
-        gStateMachine->linkUp();
+        !gStateMachine->estopLatched() && gStateMachine->linkUp();
     if (!gStateMachine->acceptsMove() && !recoveringCommandError) {
         publishError("BAD_COMMAND",
-                     "Move rejected: system not in IDLE+homed state");
+                     "Move rejected: system is not in IDLE state");
         return;
     }
 
@@ -480,7 +478,7 @@ void NetworkTask::handleMoveCommand(const String& message) {
     // Publish the MOVING state
     const char* profileStr =
         gStateMachine->payload() == Motion::PayloadProfile::Loaded ? "loaded" : "empty";
-    publishState("MOVING", gStateMachine->homed(), profileStr, cmd.gripper.c_str());
+    publishState("MOVING", profileStr, cmd.gripper.c_str());
 }
 
 // -------------------------------------------------------------------------
@@ -511,7 +509,7 @@ void NetworkTask::handlePayloadProfile(const String& message) {
 
     const char* gripperStr =
         gStateMachine->gripper() == Control::GripperPose::Closed ? "closed" : "open";
-    publishState("IDLE", gStateMachine->homed(), profile.c_str(), gripperStr);
+    publishState("IDLE", profile.c_str(), gripperStr);
 
     // Update the /api/limits endpoint with the new profile
     gHttpServer.setLimitsPayload(
@@ -552,16 +550,6 @@ void NetworkTask::onSocketMessage(const String& message) {
     // ---- Move command: full IK → trajectory → queue pipeline ----
     if (message.indexOf("move_command") >= 0) {
         handleMoveCommand(message);
-        return;
-    }
-
-    // ---- Home request ----
-    if (message.indexOf("home_request") >= 0) {
-        if (gControlRequestCb != nullptr) {
-            gControlRequestCb("home_request");
-        } else {
-            publishError("INTERNAL", "Control request handler not attached");
-        }
         return;
     }
 

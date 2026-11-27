@@ -8,25 +8,23 @@
 //
 // Pure logic: no GPIO, I2C, or FreeRTOS. Callers apply motor outputs.
 //
-//   BOOT → SELF_CHECK → HOMING → IDLE ⇄ MOVING
-//                                  ↓
-//                                ERROR → (valid move or clear) → IDLE
+//   BOOT → IDLE ⇄ MOVING
+//                ↓
+//              ERROR → (valid move or clear) → IDLE
 //
 //   Any state → ESTOP_TRIGGERED
-//     ESTOP_TRIGGERED → (clear_estop AND line safe AND re-home) → HOMING
+//     ESTOP_TRIGGERED → (explicit clear_estop with a safe line) → IDLE
 //
 //   MOVING + disconnect → stay MOVING until the trajectory finishes → DISCONNECT_LOCKOUT
 //   Any other supervised state + disconnect → DISCONNECT_LOCKOUT immediately
-//   DISCONNECT_LOCKOUT → (reconnect AND re-home) → HOMING
+//   DISCONNECT_LOCKOUT → (fresh connection) → IDLE
 //
-// Payload profile resets to EMPTY when homing completes (boot and every re-home).
+// Payload profile resets to EMPTY on boot, e-stop clear, and disconnect recovery.
 
 namespace Control {
 
 enum class SystemState : uint8_t {
     Boot = 0,
-    SelfCheck,
-    Homing,
     Idle,
     Moving,
     Error,
@@ -40,8 +38,6 @@ enum class FaultCode : uint8_t {
     TargetUnreachable,
     IkFailure,
     JointLimitExceeded,
-    HomingFailed,
-    SelfCheckFailed,
     Watchdog,
 };
 
@@ -59,29 +55,18 @@ class StateMachine {
     FaultCode fault() const { return fault_; }
     Motion::PayloadProfile payload() const { return payload_; }
     GripperPose gripper() const { return gripper_; }
-    bool homed() const { return homed_; }
     bool linkUp() const { return linkUp_; }
     bool estopLatched() const { return estopLatched_; }
-    bool clearEstopRequested() const { return clearEstopRequested_; }
     bool finishAfterDisconnect() const { return finishAfterDisconnect_; }
 
-    /// BOOT, EMPTY payload, gripper open, not homed.
+    /// Reset to BOOT, EMPTY payload, and an open gripper.
     void reset();
 
-    /// BOOT → SELF_CHECK.
-    bool beginSelfCheck();
-
-    /// SELF_CHECK → HOMING on success, ERROR / SELF_CHECK_FAILED otherwise.
-    bool reportSelfCheck(bool ok);
-
-    /// HOMING → IDLE. Marks homed, opens the gripper, forces the EMPTY profile.
-    bool notifyHomingComplete();
-
-    /// HOMING → ERROR / HOMING_FAILED. Leaves the arm unhomed.
-    bool notifyHomingFailed();
+    /// BOOT → IDLE.
+    bool begin();
 
     /// IDLE → MOVING. A valid move issued from ERROR clears the fault and starts.
-    /// Rejected unless the arm is homed. Gripper pose is stored for telemetry.
+    /// Gripper pose is stored for telemetry.
     bool requestMove(GripperPose gripper);
 
     /// MOVING → IDLE, or → DISCONNECT_LOCKOUT if the link dropped mid-move.
@@ -100,25 +85,18 @@ class StateMachine {
     /// Accepted in IDLE only. Rejected mid-move and in every other state.
     bool setPayload(Motion::PayloadProfile profile);
 
-    /// Highest priority. Latches until clear_estop and a successful re-home.
+    /// Highest priority. Latches until an explicit, safe clear_estop command.
     void notifyEstop();
 
-    /// Records the operator clear. Does not leave ESTOP_TRIGGERED and does not
-    /// start motion — a released switch alone is not a resume.
+    /// ESTOP_TRIGGERED → IDLE. Caller must verify the e-stop line is safe and
+    /// release the hardware safety latch first.
     bool requestClearEstop();
-
-    /// Explicit re-home.
-    /// IDLE / ERROR → HOMING.
-    /// ESTOP_TRIGGERED → HOMING only after requestClearEstop and a safe line.
-    /// DISCONNECT_LOCKOUT → HOMING only after the link is back.
-    /// `lineSafe` is the e-stop input: true when the circuit is closed (LOW).
-    bool requestHome(bool lineSafe);
 
     /// Link dropped. MOVING keeps running with finishAfterDisconnect set.
     /// Every other non-ESTOP state goes straight to DISCONNECT_LOCKOUT.
     void notifyDisconnect();
 
-    /// Link restored. Does not leave DISCONNECT_LOCKOUT.
+    /// Link restored. Leaves DISCONNECT_LOCKOUT and returns to IDLE.
     void notifyReconnect();
 
     bool acceptsMove() const;
@@ -128,13 +106,9 @@ class StateMachine {
     FaultCode fault_ = FaultCode::None;
     Motion::PayloadProfile payload_ = Motion::PayloadProfile::Empty;
     GripperPose gripper_ = GripperPose::Open;
-    bool homed_ = false;
     bool linkUp_ = true;
     bool estopLatched_ = false;
-    bool clearEstopRequested_ = false;
     bool finishAfterDisconnect_ = false;
-
-    void enterHoming();
 };
 
 }  // namespace Control

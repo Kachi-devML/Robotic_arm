@@ -19,7 +19,6 @@ class WebSocketHandler {
     bool connected() const;
 
     void sendStateUpdate(const char* state,
-                         bool homed,
                          const char* payloadProfile,
                          const char* gripper);
     void sendError(const char* code, const char* message);

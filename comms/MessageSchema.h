@@ -22,7 +22,6 @@ bool parseIkPreview(const String& message, MoveCommand& out);
 bool parseSetPayloadProfile(const String& message, String& profile);
 
 String buildStateUpdate(const char* state,
-                        bool homed,
                         const char* payloadProfile,
                         const char* gripper);
 String buildError(const char* code, const char* message);
@@ -37,7 +36,6 @@ String buildLimitsResponse(const char* payloadProfile,
                           float link3,
                           float shoulderHeight);
 String buildStatusResponse(const char* state,
-                          bool homed,
                           const char* lastError);
 String buildTrajectoryProgress(float progress,
                               float theta0,

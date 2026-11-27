@@ -26,8 +26,6 @@ struct MotionCommand {
     enum class Type : uint8_t {
         Execute,   // Run a trajectory plan to completion
         Stop,      // Abort the active trajectory immediately
-        Home,      // Trigger a re-home sequence (handled in main loop,
-                   //   but MotionTask must stop any active move first)
     };
 
     Type type = Type::Execute;

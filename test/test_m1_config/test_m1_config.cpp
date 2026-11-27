@@ -40,6 +40,69 @@ void test_servo_pulse_to_duty_conversion(void) {
   TEST_ASSERT_EQUAL_UINT16(2048, Motion::ServoDriver::pulseToDuty(2500));
 }
 
+void test_wrist_inversion_conversion(void) {
+  const auto at45 = Motion::ServoDriver::convertAngleDeg(
+      45.0f, Motion::ServoConfig::kWrist, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 45.0f, at45.jointAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 135.0f, at45.servoAngleDeg);
+  TEST_ASSERT_EQUAL_UINT16(1950, at45.pulseUs);
+  TEST_ASSERT_EQUAL_UINT16(1597, at45.duty);
+
+  const auto at90 = Motion::ServoDriver::convertAngleDeg(
+      90.0f, Motion::ServoConfig::kWrist, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 90.0f, at90.jointAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 90.0f, at90.servoAngleDeg);
+  TEST_ASSERT_EQUAL_UINT16(1500, at90.pulseUs);
+  TEST_ASSERT_EQUAL_UINT16(1229, at90.duty);
+
+  const auto at135 = Motion::ServoDriver::convertAngleDeg(
+      135.0f, Motion::ServoConfig::kWrist, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 135.0f, at135.jointAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 45.0f, at135.servoAngleDeg);
+  TEST_ASSERT_EQUAL_UINT16(1050, at135.pulseUs);
+  TEST_ASSERT_EQUAL_UINT16(860, at135.duty);
+}
+
+void test_servo_affine_calibration_and_clamps(void) {
+  auto config = Motion::ServoConfig::kWrist;
+  config.zeroServoDeg = 100.0f;
+  config.direction = -1;
+  config.gain = 1.0f;
+
+  const auto at90 = Motion::ServoDriver::convertAngleDeg(
+      90.0f, config, Motion::ServoDriver::kWristPulse);
+  const auto at45 = Motion::ServoDriver::convertAngleDeg(
+      45.0f, config, Motion::ServoDriver::kWristPulse);
+  const auto at135 = Motion::ServoDriver::convertAngleDeg(
+      135.0f, config, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 100.0f, at90.servoAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 145.0f, at45.servoAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 55.0f, at135.servoAngleDeg);
+
+  const auto jointClamped = Motion::ServoDriver::convertAngleDeg(
+      200.0f, config, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_TRUE(jointClamped.jointClamped);
+  TEST_ASSERT_FALSE(jointClamped.servoClamped);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 180.0f, jointClamped.jointAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 10.0f, jointClamped.servoAngleDeg);
+
+  const auto servoClamped = Motion::ServoDriver::convertAngleDeg(
+      0.0f, config, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_FALSE(servoClamped.jointClamped);
+  TEST_ASSERT_TRUE(servoClamped.servoClamped);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 190.0f, servoClamped.mappedServoAngleDeg);
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 180.0f, servoClamped.servoAngleDeg);
+
+  const auto home = Motion::ServoDriver::convertAngleDeg(
+      90.0f, config, Motion::ServoDriver::kWristPulse);
+  TEST_ASSERT_EQUAL_UINT16(1600, home.pulseUs);
+  TEST_ASSERT_EQUAL_UINT16(1311, home.duty);
+  TEST_ASSERT_EQUAL_UINT16(
+      Motion::ServoDriver::angleToPulseUs(
+          home.servoAngleDeg, Motion::ServoDriver::kWristPulse),
+      home.pulseUs);
+}
+
 void test_safety_derate_applies_to_each_actuator_limit(void) {
   TEST_ASSERT_TRUE(near(
       MotionConfig::kTheta0MaxAcc_radps2,
@@ -94,6 +157,8 @@ int main(int argc, char** argv) {
   UNITY_BEGIN();
   RUN_TEST(test_stepper_degree_conversion_and_round_trip);
   RUN_TEST(test_servo_pulse_to_duty_conversion);
+  RUN_TEST(test_wrist_inversion_conversion);
+  RUN_TEST(test_servo_affine_calibration_and_clamps);
   RUN_TEST(test_safety_derate_applies_to_each_actuator_limit);
   return UNITY_END();
 }

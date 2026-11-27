@@ -3,7 +3,6 @@
 #include <cstring>
 #include <freertos/semphr.h>
 
-#include "HomingSequence.h"
 #include "JointLimits.h"
 #include "Logger.h"
 #include "MotionConfig.h"
@@ -28,8 +27,7 @@ bool gStepperEnabled = false;
 bool gMotionReady = true;
 std::atomic<bool> gMoveCompletePending{false};
 std::atomic<bool> gMoveStoppedPending{false};
-std::atomic<bool> gHomeRequestPending{false};
-std::atomic<bool> gHomeRequestClearsEstop{false};
+std::atomic<bool> gClearEstopPending{false};
 std::atomic<bool> gNetworkConnectedPending{false};
 std::atomic<bool> gLinkActivityPending{false};
 std::atomic<bool> gStatePublishPending{false};
@@ -37,11 +35,9 @@ std::atomic<uint32_t> gLastLinkActivityMs{0};
 
 #if !DRIVER_BENCH
 Control::StateMachine gState;
-Control::HomingSequence gHoming;
 Control::SystemState gLoggedState = Control::SystemState::Boot;
 bool gHavePublishedState = false;
 Control::SystemState gPublishedState = Control::SystemState::Boot;
-bool gPublishedHomed = false;
 Motion::PayloadProfile gPublishedPayload = Motion::PayloadProfile::Empty;
 Control::GripperPose gPublishedGripper = Control::GripperPose::Open;
 #endif
@@ -127,31 +123,12 @@ bool isEstopLatched() {
 }
 
 void handleControlRequest(const char* requestType) {
-    if (!gMotionReady) {
-        Tasks::NetworkTask::publishError("INTERNAL", "Motion task is unavailable");
-        return;
-    }
-
-    if (std::strcmp(requestType, "home_request") == 0) {
-        const bool lineSafe =
-            SimMode::isEnabled() || digitalRead(Pins::kEstopSw) == LOW;
-        const bool wasLatched = gSafety.isLatched();
-        if (!lineSafe ||
-            (wasLatched && gState.state() != Control::SystemState::EstopTriggered) ||
-            !gState.requestHome(lineSafe)) {
-            Tasks::NetworkTask::publishError(
-                "BAD_COMMAND", "Home rejected in the current state or while e-stop is active");
-            return;
-        }
-        gHomeRequestClearsEstop.store(wasLatched, std::memory_order_relaxed);
-        gHomeRequestPending.store(true, std::memory_order_release);
-        return;
-    }
-
     if (std::strcmp(requestType, "clear_estop") == 0) {
-        if (!gState.requestClearEstop()) {
+        if (gState.state() != Control::SystemState::EstopTriggered) {
             Tasks::NetworkTask::publishError(
                 "BAD_COMMAND", "Clear e-stop is only valid while e-stop is latched");
+        } else {
+            gClearEstopPending.store(true, std::memory_order_release);
         }
         return;
     }
@@ -171,64 +148,19 @@ void handleControlRequest(const char* requestType) {
     Tasks::NetworkTask::publishError("BAD_COMMAND", "Unknown control request");
 }
 
-bool homeSwitchTriggered(int32_t step) {
-    if (SimMode::isEnabled()) {
-        // Virtual switch at step 0 so sim boot can finish homing with no GPIO.
-        return step <= 0;
-    }
-    // External pull-up: pressed (to GND) reads LOW.
-    return digitalRead(Pins::kHomeSw) == LOW;
-}
-
-void snapServosHome() {
-    const float shoulder = JointLimits::radToDeg(JointLimits::kTheta1Home_rad);
-    const float elbow = JointLimits::radToDeg(JointLimits::kTheta2Home_rad);
-    const float wrist = JointLimits::radToDeg(JointLimits::kTheta3Home_rad);
-    const float gripper = JointLimits::radToDeg(JointLimits::kGripperHome_rad);
-    Motion::ServoDriver::setAngleDeg(Motion::ServoDriver::kChannelShoulder, shoulder,
-                                     Motion::ServoDriver::kShoulderPulse);
-    Motion::ServoDriver::setAngleDeg(Motion::ServoDriver::kChannelElbow, elbow,
-                                     Motion::ServoDriver::kElbowPulse);
-    Motion::ServoDriver::setAngleDeg(Motion::ServoDriver::kChannelWrist, wrist,
-                                     Motion::ServoDriver::kWristPulse);
-    Motion::ServoDriver::setAngleDeg(Motion::ServoDriver::kChannelGripper, gripper,
-                                     Motion::ServoDriver::kGripperPulse);
-}
-
-void applyHoming(const Control::HomingSequence::Status& st) {
-    if (st.snapServos) {
-        snapServosHome();
-    }
-    if (st.zeroNow) {
-        Motion::StepperDriver::zeroPosition();
-        setStepperEnabled(false);
-        return;
-    }
-    if (st.phase == Control::HomingSequence::Phase::Failed ||
-        st.phase == Control::HomingSequence::Phase::Aborted) {
-        setStepperEnabled(false);
-        return;
-    }
-    setStepperEnabled(st.enableStepper);
-    if (st.enableStepper) {
-        Motion::StepperDriver::setTargetStep(st.targetStep);
-    }
-}
-
 void logState() {
     lockState();
     const Control::SystemState state = gState.state();
     const Control::FaultCode fault = gState.fault();
-    const bool homed = gState.homed();
     const Motion::PayloadProfile payload = gState.payload();
     unlockState();
 
     if (state == gLoggedState) {
         return;
     }
-    LOG_INFO("state %s -> %s fault=%s homed=%d payload=%s",
+    LOG_INFO("state %s -> %s fault=%s payload=%s",
              Control::stateName(gLoggedState), Control::stateName(state),
-             Control::faultName(fault), homed ? 1 : 0,
+             Control::faultName(fault),
              payload == Motion::PayloadProfile::Loaded ? "loaded" : "empty");
     gLoggedState = state;
 }
@@ -243,9 +175,6 @@ void updateLed(uint32_t now) {
         case Control::SystemState::Moving:
             on = true;
             break;
-        case Control::SystemState::Homing:
-            on = ((now / 200) % 2) == 0;
-            break;
         case Control::SystemState::DisconnectLockout:
             on = ((now / 600) % 2) == 0;
             break;
@@ -259,44 +188,36 @@ void updateLed(uint32_t now) {
 void publishCurrentState(bool force) {
     lockState();
     const Control::SystemState state = gState.state();
-    const bool homed = gState.homed();
     const Motion::PayloadProfile payload = gState.payload();
     const Control::GripperPose gripper = gState.gripper();
     unlockState();
 
     if (!force && gHavePublishedState && state == gPublishedState &&
-        homed == gPublishedHomed && payload == gPublishedPayload &&
+        payload == gPublishedPayload &&
         gripper == gPublishedGripper) {
         return;
     }
 
     Tasks::NetworkTask::publishState(
-        Control::stateName(state), homed,
+        Control::stateName(state),
         payload == Motion::PayloadProfile::Loaded ? "loaded" : "empty",
         gripper == Control::GripperPose::Closed ? "closed" : "open");
     gPublishedState = state;
-    gPublishedHomed = homed;
     gPublishedPayload = payload;
     gPublishedGripper = gripper;
     gHavePublishedState = true;
 }
 
-void beginControl(uint32_t now) {
+void beginControl() {
     gState.reset();
-    gState.beginSelfCheck();
+    gState.begin();
     if (gSafety.isLatched()) {
         gState.notifyEstop();
         LOG_ERROR("e-stop line open at boot — motion latched off");
-        return;
     }
-    if (!gState.reportSelfCheck(gMotionReady)) {
-        if (!gMotionReady) {
-            LOG_ERROR("self-check failed: MotionTask unavailable");
-        }
-        return;
+    if (!gMotionReady) {
+        LOG_ERROR("MotionTask unavailable; move commands cannot be executed");
     }
-    gHoming.start(now);
-    LOG_INFO("homing: servos to 90 deg, gripper open, base seeking switch");
 }
 #endif
 
@@ -316,17 +237,15 @@ void commandBenchServos() {
 }  // namespace
 
 void setup() {
+    Serial.println("BUILD TEST 1: setup reached");          // first line in setup()
     Logger::begin(115200);
     pinMode(Pins::kStatusLed, OUTPUT);
     digitalWrite(Pins::kStatusLed, LOW);
-    if (!SimMode::isEnabled()) {
-        pinMode(Pins::kHomeSw, INPUT);
-    }
 
     LOG_INFO("M5 control boot (ESP32-S3) sim=%d bench=%d", SimMode::isEnabled() ? 1 : 0,
              DRIVER_BENCH);
-    LOG_INFO("pins STEP=%u DIR=%u EN=%u HOME=%u ESTOP=%u  estop HIGH=triggered",
-             Pins::kNemaStep, Pins::kNemaDir, Pins::kNemaEn, Pins::kHomeSw, Pins::kEstopSw);
+    LOG_INFO("pins STEP=%u DIR=%u EN=%u ESTOP=%u  estop HIGH=triggered",
+             Pins::kNemaStep, Pins::kNemaDir, Pins::kNemaEn, Pins::kEstopSw);
 
     Motion::ServoDriver::begin();
     Motion::StepperDriver::begin();
@@ -354,10 +273,8 @@ void setup() {
     }
 #endif
 
-    const uint32_t now = millis();
-
 #if !DRIVER_BENCH
-    beginControl(now);
+    beginControl();
 #endif
 
     if (!Tasks::NetworkTask::begin()) {
@@ -368,13 +285,6 @@ void setup() {
     enter(BenchPhase::CommandServos);
     LOG_INFO("DRIVER_BENCH: servos -> %.0f deg (gripper %.0f), stepper +/-%ld steps",
              kBenchServoDeg, kBenchGripperDeg, static_cast<long>(kBenchSteps));
-#else
-    lockState();
-    const bool startHoming = gState.state() == Control::SystemState::Homing;
-    unlockState();
-    if (startHoming && !gSafety.isLatched()) {
-        gHoming.start(millis());
-    }
 #endif
 
     gSafety.kick(millis());
@@ -461,38 +371,41 @@ void loop() {
         gSafety.noteLinkActivity(
             gLastLinkActivityMs.load(std::memory_order_relaxed));
     }
-    if (gHomeRequestPending.exchange(false, std::memory_order_acquire)) {
-        const bool clearsEstop =
-            gHomeRequestClearsEstop.exchange(false, std::memory_order_relaxed);
+    if (gClearEstopPending.exchange(false, std::memory_order_acquire)) {
         const bool lineSafe =
             SimMode::isEnabled() || digitalRead(Pins::kEstopSw) == LOW;
-        if (!lineSafe || (gSafety.isLatched() && !clearsEstop)) {
-            lockState();
-            gState.notifyEstop();
-            unlockState();
+        if (!lineSafe) {
             Tasks::NetworkTask::publishError(
-                "BAD_COMMAND", "E-stop became active before homing started");
+                "BAD_COMMAND", "Cannot clear e-stop while the input is triggered");
         } else {
-            if (gSafety.isLatched()) {
-                gSafety.releaseLatch();
-            }
-            if (gSafety.isLatched() ||
-                (!SimMode::isEnabled() && digitalRead(Pins::kEstopSw) == HIGH)) {
+            gSafety.releaseLatch();
+            const bool lineStillSafe =
+                SimMode::isEnabled() || digitalRead(Pins::kEstopSw) == LOW;
+            if (gSafety.isLatched() || !lineStillSafe) {
+                if (!gSafety.isLatched()) {
+                    gSafety.onEstopEdge();
+                }
                 lockState();
                 gState.notifyEstop();
                 unlockState();
                 Tasks::NetworkTask::publishError(
-                    "BAD_COMMAND", "E-stop became active before homing started");
+                    "BAD_COMMAND", "E-stop became active while clearing");
             } else {
-                gHoming.start(now);
-                LOG_INFO("home request accepted");
+                lockState();
+                const bool cleared = gState.requestClearEstop();
+                unlockState();
+                if (cleared) {
+                    LOG_WARN("position may be uncertain after e-stop; verify visually");
+                } else {
+                    Tasks::NetworkTask::publishError(
+                        "BAD_COMMAND", "Clear e-stop is only valid while e-stop is latched");
+                }
             }
         }
     }
 
     if (gSafety.pollWatchdog(now)) {
         forceSafeOutputs();
-        gHoming.abort();
         lockState();
         gState.fault(Control::FaultCode::Watchdog);
         unlockState();
@@ -505,40 +418,14 @@ void loop() {
         gState.notifyDisconnect();
         const Control::SystemState after = gState.state();
         unlockState();
-        if (before == Control::SystemState::Homing) {
-            gHoming.abort();
-            forceSafeOutputs();
-            LOG_WARN("link lost during homing — lockout");
-        } else if (before == Control::SystemState::Moving) {
+        if (before == Control::SystemState::Moving) {
             LOG_WARN("link lost during move — finishing trajectory, then lockout");
         } else if (after == Control::SystemState::DisconnectLockout) {
             LOG_WARN("link lost — disconnect lockout");
         }
     }
 
-    lockState();
-    const bool isHoming = gState.state() == Control::SystemState::Homing;
-    unlockState();
-    if (isHoming && !gSafety.isLatched()) {
-        const int32_t step = Motion::StepperDriver::currentStep();
-        const auto st = gHoming.tick(now, homeSwitchTriggered(step), step);
-        applyHoming(st);
-        if (st.phase == Control::HomingSequence::Phase::Done) {
-            lockState();
-            gState.notifyHomingComplete();
-            unlockState();
-            LOG_INFO("homing complete, step zeroed");
-        } else if (st.phase == Control::HomingSequence::Phase::Failed) {
-            setStepperEnabled(false);
-            lockState();
-            gState.notifyHomingFailed();
-            unlockState();
-            LOG_ERROR("homing failed: %s", st.failReason != nullptr ? st.failReason : "?");
-        }
-    }
-
-    // Rising edge may have landed during the homing tick. Cut again and latch
-    // the state. Releasing the switch does not leave ESTOP_TRIGGERED.
+    // Keep the state machine synchronized if the hardware interrupt trips.
     bool newlyEstopped = false;
     if (gSafety.isLatched()) {
         lockState();
@@ -549,9 +436,8 @@ void loop() {
         unlockState();
     }
     if (newlyEstopped) {
-        gHoming.abort();
         forceSafeOutputs();
-        LOG_ERROR("e-stop latched (HIGH = open circuit). clear_estop then re-home");
+        LOG_ERROR("e-stop latched (HIGH = open circuit). clear_estop required");
     }
 
     publishCurrentState(

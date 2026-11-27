@@ -61,15 +61,6 @@ constexpr float BASE_MAX_VEL_OUT_DPS =
 static_assert(BASE_MAX_VEL_OUT_DPS * STEPPER_STEPS_PER_OUTPUT_DEG * 4.0f <= STEPPER_ISR_HZ,
               "Step ISR too slow for base max velocity at this microstep/gear ratio");
 
-// Homing defaults are output-shaft degrees and degrees/s (§4).
-constexpr float kHomingSeekDegPerSec = 30.0f;
-constexpr float kHomingCreepDegPerSec = 8.0f;
-constexpr float kHomingBackoffDeg = 5.0f;
-constexpr float kHomingCreepExtraDeg = 3.0f;
-constexpr float kHomingMaxTravelDeg = 380.0f;
-constexpr uint32_t kHomingTimeoutMs = 25000;
-constexpr uint32_t kHomingServoSettleMs = 300;
-
 // Link supervision (§5.2): 1 s heartbeat, 2 missed = disconnected.
 constexpr uint32_t kHeartbeatIntervalMs = 1000;
 constexpr uint32_t kHeartbeatMisses = 2;

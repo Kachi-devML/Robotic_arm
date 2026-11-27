@@ -13,7 +13,7 @@ class WebServerManager {
     void begin();
     void handleClient();
 
-    void setStatusPayload(const String& state, bool homed);
+    void setStatusPayload(const String& state);
     void setLastError(const String& lastError);
     void setLimitsPayload(const String& payloadProfile,
                           float minReach,
@@ -22,7 +22,6 @@ class WebServerManager {
  private:
     WebServer server_;
     String state_ = "BOOT";
-    bool homed_ = false;
     String lastError_ = "";
     String payloadProfile_ = "empty";
     float minReach_ = 0.0f;

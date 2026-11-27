@@ -34,7 +34,6 @@ class NetworkTask {
     // --- Outbound state push ---
 
     static void publishState(const char* state,
-                             bool homed,
                              const char* payloadProfile,
                              const char* gripper);
     static void publishError(const char* code, const char* message);
@@ -61,8 +60,7 @@ class NetworkTask {
     static void setLinkStatusCallback(LinkStatusCb cb);
     static void setLinkActivityCallback(LinkActivityCb cb);
 
-    /// Provide a callback the network task invokes when the user requests
-    /// a home or clear-estop (things the control loop in main.cpp handles).
+    /// Provide a callback for clear-estop and stop requests handled by main.cpp.
     using ControlRequestCb = void (*)(const char* requestType);
     static void setControlRequestCallback(ControlRequestCb cb);
 

@@ -17,8 +17,11 @@ struct ServoConfig {
         uint16_t pulseMinUs;
         uint16_t pulseMaxUs;
         float angleRangeDeg;
-        bool invert;
-        int16_t trimUs;
+        float jointMinDeg;
+        float jointMaxDeg;
+        float zeroServoDeg;
+        int8_t direction;
+        float gain;
     };
 
     static constexpr Channel kShoulder = {
@@ -26,32 +29,44 @@ struct ServoConfig {
         600,
         2400,
         180.0f,
-        false,
-        0,
+        0.0f,
+        180.0f,
+        90.0f,
+        1,
+        1.0f,
     };
     static constexpr Channel kElbow = {
         Pins::kServoElbowPwm,
         600,
         2400,
         180.0f,
-        false,
-        0,
+        0.0f,
+        180.0f,
+        90.0f,
+        1,
+        1.0f,
     };
     static constexpr Channel kWrist = {
         Pins::kServoWristPwm,
         600,
         2400,
         180.0f,
-        false,
-        0,
+        0.0f,
+        180.0f,
+        90.0f,
+        -1,
+        1.0f,
     };
     static constexpr Channel kGripper = {
         Pins::kServoGripperPwm,
         600,
         2400,
         90.0f,
-        false,
-        0,
+        0.0f,
+        90.0f,
+        90.0f,
+        1,
+        1.0f,
     };
 };
 

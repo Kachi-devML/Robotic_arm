@@ -20,12 +20,6 @@ constexpr uint8_t kLedcPins[] = {
 
 static bool sInitialized = false;
 
-static float clampf(float value, float lo, float hi) {
-    if (value < lo) return lo;
-    if (value > hi) return hi;
-    return value;
-}
-
 static uint16_t pulseToDutyRaw(uint16_t pulse_us) {
     return static_cast<uint16_t>(
         round(static_cast<float>(pulse_us) * static_cast<float>(1u << ServoConfig::kPwmResolutionBits) /
@@ -42,6 +36,22 @@ static const ServoConfig::Channel& configForId(ServoId id) {
     return ServoConfig::kShoulder;
 }
 
+static ServoDriver::PulseRange pulseRangeFor(const ServoConfig::Channel& config) {
+    return {config.pulseMinUs, config.pulseMaxUs, config.angleRangeDeg};
+}
+
+static void logClamps(ServoId id, const ServoDriver::AngleConversion& conversion) {
+    if (conversion.jointClamped) {
+        LOG_WARN("[ServoDriver] ch%u joint angle clamped to soft limit %.2f",
+                 static_cast<unsigned>(id), conversion.jointAngleDeg);
+    }
+    if (conversion.servoClamped) {
+        LOG_WARN("[ServoDriver] ch%u mapped servo angle %.2f clamped to %.2f",
+                 static_cast<unsigned>(id), conversion.mappedServoAngleDeg,
+                 conversion.servoAngleDeg);
+    }
+}
+
 }  // namespace
 
 bool ServoDriver::begin() {
@@ -52,9 +62,15 @@ bool ServoDriver::begin() {
     }
 
     for (size_t i = 0; i < 4; ++i) {
+        const ServoId id = static_cast<ServoId>(i);
+        const auto& config = configForId(id);
+        const float homeJointDeg = id == ServoId::GRIPPER ? 0.0f : 90.0f;
+        const AngleConversion home =
+            convertAngleDeg(homeJointDeg, config, pulseRangeFor(config));
         ledcSetup(kLedcChannels[i], ServoConfig::kPwmFrequencyHz, ServoConfig::kPwmResolutionBits);
         ledcAttachPin(kLedcPins[i], kLedcChannels[i]);
-        ledcWrite(kLedcChannels[i], pulseToDutyRaw(1500));
+        ledcWrite(kLedcChannels[i], pulseToDutyRaw(home.pulseUs));
+        logClamps(id, home);
     }
 
     sInitialized = true;
@@ -64,15 +80,41 @@ bool ServoDriver::begin() {
 
 void ServoDriver::writeAngleDeg(ServoId id, float angle_deg) {
     const auto& cfg = configForId(id);
-    writeAngleDeg(static_cast<uint8_t>(id), angle_deg, {cfg.pulseMinUs, cfg.pulseMaxUs, cfg.angleRangeDeg});
+    const AngleConversion conversion =
+        convertAngleDeg(angle_deg, cfg, pulseRangeFor(cfg));
+    logClamps(id, conversion);
+    if (SimMode::isEnabled()) {
+        LOG_DEBUG("[ServoDriver] SIM: ch%u joint=%.2f mapped=%.2f servo=%.2f",
+                  static_cast<unsigned>(id), conversion.jointAngleDeg,
+                  conversion.mappedServoAngleDeg, conversion.servoAngleDeg);
+    }
+    setPulseUs(static_cast<uint8_t>(id), conversion.pulseUs);
+}
+
+void ServoDriver::writeRawAngleDeg(ServoId id, float servo_angle_deg) {
+    const auto& cfg = configForId(id);
+    const PulseRange range = pulseRangeFor(cfg);
+    const float servoAngle =
+        fminf(fmaxf(servo_angle_deg, 0.0f), range.max_deg);
+    if (servoAngle != servo_angle_deg) {
+        LOG_WARN("[ServoDriver] raw ch%u angle %.2f clamped to %.2f",
+                 static_cast<unsigned>(id), servo_angle_deg, servoAngle);
+    }
+    setPulseUs(static_cast<uint8_t>(id), angleToPulseUs(servoAngle, range));
 }
 
 void ServoDriver::writeAngleDeg(uint8_t channel, float angle_deg,
                                const PulseRange& range) {
-    const float clamped = clampf(angle_deg, 0.0f, range.max_deg);
-    const float frac = (range.max_deg > 0.0f) ? (clamped / range.max_deg) : 0.0f;
-    const uint16_t pulse_us = static_cast<uint16_t>(range.min_us + frac * (range.max_us - range.min_us) + 0.5f);
-    setPulseUs(channel, pulse_us);
+    const ServoId id = static_cast<ServoId>(channel);
+    const auto& cfg = configForId(id);
+    const AngleConversion conversion = convertAngleDeg(angle_deg, cfg, range);
+    logClamps(id, conversion);
+    if (SimMode::isEnabled()) {
+        LOG_DEBUG("[ServoDriver] SIM: ch%u joint=%.2f mapped=%.2f servo=%.2f",
+                  channel, conversion.jointAngleDeg,
+                  conversion.mappedServoAngleDeg, conversion.servoAngleDeg);
+    }
+    setPulseUs(channel, conversion.pulseUs);
 }
 
 void ServoDriver::setAngleDeg(uint8_t channel, float angle_deg,
@@ -86,8 +128,9 @@ void ServoDriver::setAngleRad(uint8_t channel, float angle_rad,
 }
 
 void ServoDriver::setPulseUs(uint8_t channel, uint16_t pulse_us) {
+    const uint16_t duty = pulseToDutyRaw(pulse_us);
     if (SimMode::isEnabled()) {
-        LOG_DEBUG("[ServoDriver] SIM: ch%u → %u µs", channel, pulse_us);
+        LOG_DEBUG("[ServoDriver] SIM: ch%u pulse=%u us duty=%u", channel, pulse_us, duty);
         return;
     }
 
@@ -96,7 +139,6 @@ void ServoDriver::setPulseUs(uint8_t channel, uint16_t pulse_us) {
         return;
     }
 
-    const uint16_t duty = pulseToDutyRaw(pulse_us);
     ledcWrite(channel, duty);
     LOG_DEBUG("[ServoDriver] ch%u pulse=%u us duty=%u", channel, pulse_us, duty);
 }

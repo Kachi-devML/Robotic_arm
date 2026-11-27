@@ -625,9 +625,9 @@ void test_fk_shoulder_straight_up(void) {
     TEST_ASSERT_FLOAT_WITHIN(kDistTol, 47.0f, fk.effector_2d.z); // d1+L1+L2+L3
 }
 
-/// Home position: θ0=0, θ1=θ2=θ3=90° in joint space.
+/// Power-on neutral pose: θ0=0, θ1=θ2=θ3=90° in joint space.
 /// The Revision 3 signs make the forearm point forward and tool point down.
-void test_fk_home_position(void) {
+void test_fk_power_on_neutral_pose(void) {
     const float h = kPi / 2.0f;
     auto fk = Kinematics::solveFK(0.0f, h, h, h);
 
@@ -755,7 +755,7 @@ int main(int argc, char** argv) {
     // FK — known configurations
     RUN_TEST(test_fk_fully_extended_forward);
     RUN_TEST(test_fk_shoulder_straight_up);
-    RUN_TEST(test_fk_home_position);
+    RUN_TEST(test_fk_power_on_neutral_pose);
     RUN_TEST(test_fk_3d_base_rotation);
 
     // Joint limit checks

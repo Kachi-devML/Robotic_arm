@@ -69,7 +69,7 @@ bool MotionTask::begin() {
         return false;
     }
 
-    // Initialize current angles to home pose
+    // Initialize current angles to the power-on neutral pose.
     gCurrentAngles.theta0 = JointLimits::kTheta0Home_rad;
     gCurrentAngles.theta1 = JointLimits::kTheta1Home_rad;
     gCurrentAngles.theta2 = JointLimits::kTheta2Home_rad;
@@ -118,7 +118,7 @@ Motion::JointVector MotionTask::currentAngles() {
         copy = gCurrentAngles;
         xSemaphoreGive(gAnglesMutex);
     } else {
-        // Fallback: return home pose if mutex unavailable
+        // Fallback: return the power-on neutral pose if the mutex is unavailable.
         copy.theta0 = JointLimits::kTheta0Home_rad;
         copy.theta1 = JointLimits::kTheta1Home_rad;
         copy.theta2 = JointLimits::kTheta2Home_rad;
@@ -402,17 +402,6 @@ void MotionTask::taskEntry(void* /*param*/) {
                 }
                 break;
 
-            case MotionCommand::Type::Home:
-                // Stop any active move so the main loop can re-home
-                if (gMoving) {
-                    Motion::StepperDriver::setTargetStep(
-                        Motion::StepperDriver::currentStep());
-                    Motion::ServoDriver::freezeAll();
-                    gMoving = false;
-                    LOG_INFO("MotionTask: stopped for re-home");
-                }
-                // The actual homing sequence is driven by main.cpp / control loop
-                break;
         }
     }
 }

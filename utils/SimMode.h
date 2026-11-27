@@ -22,7 +22,7 @@ inline constexpr bool kCompileTimeEnabled = false;
 
 // Runtime flag — starts matching the compile-time setting.
 // Can be toggled at startup (e.g. if a boot-time GPIO jumper is read,
-// or a serial command is received before homing).
+// or a serial command is received).
 inline bool gRuntimeEnabled = kCompileTimeEnabled;
 
 /// True if simulation mode is active (either compile-time or runtime).

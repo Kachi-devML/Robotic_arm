@@ -21,6 +21,16 @@ struct ServoDriver {
         float max_deg;
     };
 
+    struct AngleConversion {
+        float jointAngleDeg;
+        float mappedServoAngleDeg;
+        float servoAngleDeg;
+        bool jointClamped;
+        bool servoClamped;
+        uint16_t pulseUs;
+        uint16_t duty;
+    };
+
     static constexpr PulseRange kShoulderPulse = {600, 2400, 180.0f};
     static constexpr PulseRange kElbowPulse = {600, 2400, 180.0f};
     static constexpr PulseRange kWristPulse = {600, 2400, 180.0f};
@@ -43,8 +53,37 @@ struct ServoDriver {
         return static_cast<uint16_t>(range.min_us + frac * (range.max_us - range.min_us) + 0.5f);
     }
 
+    static inline AngleConversion convertAngleDeg(
+        float angle_deg,
+        const ServoConfig::Channel& config,
+        const PulseRange& range) {
+        const float jointAngle =
+            fminf(fmaxf(angle_deg, config.jointMinDeg), config.jointMaxDeg);
+        const float mappedServoAngle =
+            config.zeroServoDeg +
+            static_cast<float>(config.direction) * config.gain *
+                (jointAngle - 90.0f);
+        const float servoAngle =
+            fminf(fmaxf(mappedServoAngle, 0.0f), range.max_deg);
+        const float fraction =
+            range.max_deg > 0.0f ? servoAngle / range.max_deg : 0.0f;
+        const int32_t untrimmedPulse = static_cast<int32_t>(
+            range.min_us + fraction * (range.max_us - range.min_us) + 0.5f);
+        const uint16_t pulse = static_cast<uint16_t>(untrimmedPulse);
+        return {
+            jointAngle,
+            mappedServoAngle,
+            servoAngle,
+            jointAngle != angle_deg,
+            servoAngle != mappedServoAngle,
+            pulse,
+            pulseToDuty(pulse),
+        };
+    }
+
     static bool begin();
     static void writeAngleDeg(ServoId id, float angle_deg);
+    static void writeRawAngleDeg(ServoId id, float servo_angle_deg);
     static void writeAngleDeg(uint8_t channel, float angle_deg,
                               const PulseRange& range);
     static void setAngleDeg(uint8_t channel, float angle_deg,

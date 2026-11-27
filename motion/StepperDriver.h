@@ -30,7 +30,6 @@ struct StepperDriver {
     static void stop();
     static void setTargetStep(int32_t step);
     static int32_t currentStep();
-    static void zeroPosition();
     static void enable();
     static void release();
     static bool isReady();

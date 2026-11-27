@@ -16,7 +16,6 @@
   let statusTimer = null;
   let lastPongAt = 0;
   let currentState = "UNKNOWN";
-  let homed = false;
   let profile = "empty";
   let lastSolution = null;
   let limits = null;
@@ -48,13 +47,9 @@
     updateControls();
   }
 
-  function updateState(state, isHomed) {
+  function updateState(state) {
     currentState = state || currentState;
-    if (typeof isHomed === "boolean") homed = isHomed;
     byId("state-label").textContent = currentState.replaceAll("_", " ");
-    const badge = byId("homed-badge");
-    badge.textContent = homed ? "Homed" : "Not homed";
-    badge.className = `badge ${homed ? "good" : "bad"}`;
     updateControls();
   }
 
@@ -66,11 +61,10 @@
       ? lastSolution.solutions[posture]
       : null;
     byId("preview-button").disabled = !connected;
-    byId("move-button").disabled = !connected || !moveState || !homed ||
+    byId("move-button").disabled = !connected || !moveState ||
       !selected || !selected.valid || trajectoryActive;
     byId("posture-select").disabled = !lastSolution || !lastSolution.solutions;
     byId("payload-select").disabled = !connected || currentState !== "IDLE";
-    byId("home-button").disabled = !connected;
     byId("stop-button").disabled = !connected;
     byId("clear-estop-button").disabled = !connected;
   }
@@ -134,8 +128,8 @@
         showError("Preview the target and select a valid posture before moving.");
         return;
       }
-      if ((currentState !== "IDLE" && currentState !== "ERROR") || !homed) {
-        showError("The arm must be homed and idle or recovering from a target error.");
+      if (currentState !== "IDLE" && currentState !== "ERROR") {
+        showError("The arm must be idle or recovering from a target error.");
         return;
       }
       if (!targetMatches(lastSolution && lastSolution.input, target)) {
@@ -235,7 +229,7 @@
         handleIkSolution(message);
         break;
       case "state_update":
-        updateState(message.state, message.homed);
+        updateState(message.state);
         if (message.payload_profile) {
           profile = message.payload_profile;
           byId("payload-select").value = profile;
@@ -304,7 +298,7 @@
       const response = await fetch("/api/status", { cache: "no-store" });
       if (!response.ok) throw new Error(`Status request failed (${response.status})`);
       const status = await response.json();
-      updateState(status.state, status.homed);
+      updateState(status.state);
       if (status.last_error) showError(status.last_error);
     } catch (error) {
       // The WebSocket indicator remains authoritative if HTTP polling is unavailable.
@@ -334,7 +328,6 @@
     form.elements[field].addEventListener("input", invalidatePreview);
   }
   byId("posture-select").addEventListener("change", updateControls);
-  byId("home-button").addEventListener("click", () => send({ type: "home_request" }));
   byId("stop-button").addEventListener("click", () => send({ type: "stop_request" }));
   byId("clear-estop-button").addEventListener("click", () => send({ type: "clear_estop" }));
   byId("payload-select").addEventListener("change", (event) => {

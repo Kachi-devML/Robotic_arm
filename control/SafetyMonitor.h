@@ -11,12 +11,12 @@
 // the hard-cut callback (disable the stepper). It does not clear itself.
 //
 // There is no relay cutting motor power. Releasing the switch must not resume
-// motion; StateMachine::requestClearEstop plus a successful re-home does that.
-// Call releaseLatch() only after that re-home has been accepted and the line
-// reads safe. A later rising edge latches again.
+// motion; an explicit clear_estop command with a safe line is required.
+// Call releaseLatch() only after the line reads safe. A later rising edge
+// latches again.
 //
 // Link supervision starts when networking calls startLinkSupervision(). Until
-// then the arm can boot and home with no WebSocket. Timeout is two missed
+// then the arm can start with no WebSocket. Timeout is two missed
 // 1 s heartbeats (MotionConfig::kLinkTimeoutMs).
 //
 // The watchdog watches the control loop, not trajectory length. Kick it every

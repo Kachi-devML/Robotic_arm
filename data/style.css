@@ -47,9 +47,6 @@ h2 { font-size: 1.13rem; letter-spacing: -.02em; }
 .status-dot.online { background: #34d399; box-shadow: 0 0 0 4px #34d39922; }
 .status-dot.offline { background: var(--red); box-shadow: 0 0 0 4px #fb718522; }
 .badge { display: inline-flex; align-items: center; padding: 5px 8px; border: 1px solid #34435b; border-radius: 999px; color: #bdc9dc; font-size: .68rem; white-space: nowrap; }
-.badge.good { color: #6ee7b7; border-color: #1b6b5b; background: #0c302b; }
-.badge.bad { color: #fda4af; border-color: #783447; background: #351c2a; }
-
 .reach-strip { justify-content: space-between; gap: 16px; margin-bottom: 16px; padding: 14px 18px; border: 1px solid var(--panel-edge); border-radius: 13px; background: linear-gradient(110deg, #15243a, #111a2a 64%); }
 .reach-strip div { display: grid; gap: 5px; }
 .reach-strip strong { font-size: .98rem; }

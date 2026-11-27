@@ -118,6 +118,7 @@ void stopTimer() {
 }  // namespace
 
 void StepperDriver::begin() {
+    // Theta0 is referenced to the physical base position at power-on.
     sCurrent = 0;
     sTarget = 0;
     sEnabled = false;
@@ -159,11 +160,6 @@ void StepperDriver::setTargetStep(int32_t step) {
 
 int32_t StepperDriver::currentStep() {
     return sCurrent;
-}
-
-void StepperDriver::zeroPosition() {
-    sCurrent = 0;
-    sTarget = 0;
 }
 
 void StepperDriver::enable() {

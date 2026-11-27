@@ -18,8 +18,8 @@ Milestones 1–9 were already built against Revision 1 of this spec. Revision 2 
 | # | Change | Where it lands |
 |---|--------|----------------|
 | A | **PCA9685 removed.** The four servo signal wires now go directly to ESP32 GPIOs and are driven by the ESP32 LEDC hardware PWM. Servos are powered by an external supply with a common ground. | §2.1, §2.2, §2.5, §6.3, §10; `Pins.h`, `ServoConfig.h` (new), `ServoDriver`, `platformio.ini`, `SimMode` |
-| B | **Base stepper now sits behind a 5:1 planetary gearbox.** Every base angle in the system remains an *output-shaft* angle; gearing is converted to steps in exactly one place (`StepperDriver`). Microstepping is re-chosen. | §2.1, §2.6, §4, §6.1, §6.4; `MotionConfig.h` (stepper block), `StepperDriver`, `HomingSequence` constants |
-| C | **Stepper coil power management.** The DRV8825 is enabled (EN low) for homing and motion and released (EN high) after a short idle delay. | §6.5; `StepperDriver`, `MotionTask`, `SafetyMonitor` (enable gating) |
+| B | **Base stepper now sits behind a 5:1 planetary gearbox.** Every base angle in the system remains an *output-shaft* angle; gearing is converted to steps in exactly one place (`StepperDriver`). Microstepping is re-chosen. | §2.1, §2.6, §4, §6.1, §6.4; `MotionConfig.h` (stepper block), `StepperDriver` |
+| C | **Stepper coil power management.** The DRV8825 is enabled (EN low) for motion and released (EN high) after a short idle delay. | §6.5; `StepperDriver`, `MotionTask`, `SafetyMonitor` (enable gating) |
 | D | **Corrections to Revision 1 text:** the e-stop wiring sentence contradicted its own polarity rule (fixed in §2.3); the ESP32-S3 has no "input-only" GPIOs, so that remark was dropped from the pin tables. | §2.2, §2.3 |
 
 **Design principle that keeps this change small:** everything above the hardware-driver layer (kinematics, S-curve, planner, message schema, web app) works in output-shaft **degrees** and is unaware of gearing, microstepping, PWM or I²C. Those details must stay hidden inside `StepperDriver` and `ServoDriver`.
@@ -49,7 +49,6 @@ Use **θ0, θ1, θ2, θ3** for base, shoulder, elbow, wrist respectively (not θ
 | Elbow (θ2) | RCXAZ 14.5KG servo | **Direct ESP32 GPIO (LEDC PWM)**, external servo supply |
 | Wrist (θ3) | MG90s servo | **Direct ESP32 GPIO (LEDC PWM)**, external servo supply |
 | Gripper | SG90 servo | **Direct ESP32 GPIO (LEDC PWM)**, external servo supply |
-| Homing | SS-5GL limit switch | GPIO (base only) |
 | E-stop | Hardware N.C. switch | GPIO (see 2.3) |
 
 The PCA9685 and the I²C bus are no longer used. Do not initialise `Wire` and do not link any PCA9685 library.
@@ -65,7 +64,7 @@ The PCA9685 and the I²C bus are no longer used. Do not initialise `Wire` and do
 | GPIO13 | NEMA_M0 | DRV8825 M0 | Microstep select |
 | GPIO14 | NEMA_M1 | DRV8825 M1 | Microstep select |
 | GPIO15 | NEMA_M2 | DRV8825 M2 | Microstep select |
-| GPIO16 | HOME_SW | SS-5GL (via 10 kΩ) | Home input, external pull-up required |
+| GPIO16 | (free) | Unassigned | Available |
 | GPIO17 | ESTOP_SW | E-stop switch (via 10 kΩ) | E-stop input, external pull-up required (see 2.3) |
 | **GPIO4** | **SERVO_SHOULDER_PWM** | YSIDO 35KG signal | LEDC PWM, 50 Hz |
 | **GPIO5** | **SERVO_ELBOW_PWM** | RCXAZ 14.5KG signal | LEDC PWM, 50 Hz |
@@ -175,28 +174,25 @@ The IK solver, reachability checks, and forward-kinematics (for drawing the diag
 
 ---
 
-## 4. Joint Limits & Homing
+## 4. Joint Limits & Power-On Reference
 
 **All joint angles in this table, in the JSON API and in the planner are measured at the joint's output.** For the base this means the **gearbox output shaft**, not the motor shaft. **[REV 2]**
 
-| Joint | Full mechanical range | Soft-limited range (firmware-enforced) | Home position |
+| Joint | Full mechanical range | Soft-limited range (firmware-enforced) | Power-on / neutral pose |
 |-|-|-|-|
-| θ0 (base) | 360° (no slip ring confirmed) | **±170° from home** (see assumption below) | 0° = limit-switch trigger point |
+| θ0 (base) | 360° (no slip ring confirmed) | **±170° from power-on position** (see assumption below) | 0° = power-on position |
 | θ1 (shoulder) | 180° | 0°–180° | 90° (vertical/upright) |
 | θ2 (elbow) | 180° | 0°–180° | 90° (folded, compact/safe pose) |
 | θ3 (wrist) | 180° | 0°–180° | 90° (level/neutral) |
 | Gripper | 90° | 0°(open)–90°(closed) | Open |
 
-**Assumption flagged to user**: base is soft-limited to ±170° because no slip ring is confirmed in the BOM — continuous rotation would eventually wind up the power/limit-switch wiring across the base joint. This constant lives in one place (`JointLimits.h`) and is trivial to widen to full 360° later if a slip ring is confirmed.
+**Assumption flagged to user**: base is soft-limited to ±170° because no slip ring is confirmed in the BOM — continuous rotation would eventually wind up the power wiring across the base joint. This constant lives in one place (`JointLimits.h`) and is trivial to widen to full 360° later if a slip ring is confirmed.
 
 **Servo range assumption:** the table assumes 180° servos. If a large servo is actually a 270° model, set its angular range and pulse calibration in `ServoConfig.h`; nothing else changes.
 
-### Homing sequence
+### Power-on position reference
 
-1. On boot (or on explicit re-home command), **all three servos snap immediately** to their defined home angles (90°, 90°, 90°) and the gripper opens. **[REV 2]** `ServoDriver::begin()` must attach each LEDC channel with its **home pulse already programmed as the initial duty**, so no output ever pulses at an unintended width (e.g. 0° or full-scale) during start-up.
-2. **Base then seeks the limit switch**: the driver is enabled (EN low) and allowed to settle (Section 6.5), then the base rotates at a slow, fixed seek speed until `HOME_SW` triggers; back off slightly and re-approach at a slower speed for repeatability (standard two-stage homing); zero the step count at that point. **[REV 2]** Seek speed, back-off distance and the homing timeout/maximum rotation are all expressed in **output-shaft degrees and °/s** in config and converted to steps by `StepperDriver`. Never express them as raw step counts.
-3. Only after all four joints report "homed" does the system transition to `IDLE`.
-4. If homing fails (switch never triggers within a timeout / max rotation), transition to `ERROR` with a specific `HOMING_FAILED` code.
+The servo driver attaches with its calibrated neutral/power-on pulse already set: shoulder, elbow, and wrist at 90°, gripper open. The stepper's counter starts at zero in `StepperDriver::begin()`, making the physical base position at power-up θ0 = 0. The operator must place the base at that reference before powering on. There is no base position switch or automatic position calibration. Firmware starts in `IDLE` when the e-stop circuit is safe.
 
 ---
 
@@ -205,25 +201,25 @@ The IK solver, reachability checks, and forward-kinematics (for drawing the diag
 Implement as an explicit enum + state machine (not scattered flags). States:
 
 ```
-BOOT → SELF_CHECK → HOMING → IDLE ⇄ MOVING
-                                 ↓
-                              ERROR (recoverable — bad command, unreachable target, IK failure)
-                                 ↓
-                        (valid new command) → IDLE
+BOOT → IDLE ⇄ MOVING
+              ↓
+            ERROR (recoverable — bad command, unreachable target, IK failure)
+              ↓
+      (valid new command) → IDLE
 
 Any state → ESTOP_TRIGGERED (highest priority, pre-empts everything)
-  ESTOP_TRIGGERED → (explicit clear_estop command AND re-home) → HOMING
+  ESTOP_TRIGGERED → (explicit clear_estop command with a safe line) → IDLE
 
 MOVING → (WiFi/WebSocket disconnect detected) → finish current trajectory → DISCONNECT_LOCKOUT
-  DISCONNECT_LOCKOUT → (reconnect + explicit re-home command) → HOMING
+  DISCONNECT_LOCKOUT → (fresh WebSocket connection) → IDLE
 ```
 
 ### 5.1 E-stop behavior
 
 * Triggering: immediate — stop generating step pulses (disable DRV8825 via `NEMA_EN`, i.e. drive it HIGH), freeze all servo PWM outputs at their current commanded position (do not continue ramping). **[REV 2]** With direct LEDC outputs, "freeze" means the servo update code stops writing new duty values; the LEDC hardware keeps emitting the last pulse width, so servos hold position exactly as before. E-stop does not cut servo power.
 * This is a **hard cut, not a decelerated stop** — e-stop exists for emergencies, correctness of a smooth stop is not the goal.
-* Latching: once triggered, stays in `ESTOP_TRIGGERED` regardless of switch state, until an explicit operator-issued `clear_estop` command is received over the web app **and** the system successfully re-homes. This prevents silently resuming into an unknown physical state.
-* Note to user in code comments: since there's no relay cutting actual motor power, a released e-stop switch alone should never be sufficient to resume motion — the explicit clear + re-home requirement is what makes this safe with the current hardware.
+* Latching: once triggered, stays in `ESTOP_TRIGGERED` regardless of switch state, until an explicit operator-issued `clear_estop` command is received over the web app while the input is safe. A released switch alone never resumes motion.
+* Note to user in code comments: since there's no relay cutting actual motor power, a released e-stop switch alone should never be sufficient to resume motion — an explicit clear command is required with the current hardware.
 * **[REV 2]** `NEMA_EN` is now also used by the routine idle-release policy (Section 6.5). The two must remain distinct code paths: the e-stop disable is **latched** and `StepperDriver::enable()` must refuse to energise the coils while `ESTOP_TRIGGERED`; the idle release is **soft and reversible**.
 
 ### 5.2 Disconnect-mid-move behavior (confirmed: Option A)
@@ -231,7 +227,7 @@ MOVING → (WiFi/WebSocket disconnect detected) → finish current trajectory �
 * Connection health tracked via WebSocket ping/pong heartbeat (recommend 1s interval, 2 missed = disconnected).
 * If disconnect is detected while `MOVING`: **do not abort** — let the current trajectory finish normally, then transition to `DISCONNECT_LOCKOUT` instead of `IDLE`.
 * If disconnect is detected while already `IDLE`: transition directly to `DISCONNECT_LOCKOUT`.
-* Recovery requires a fresh WebSocket connection **and** an explicit re-home before any move command is accepted.
+* Recovery requires a fresh WebSocket connection before any move command is accepted.
 
 ### 5.3 Payload profile
 
@@ -239,7 +235,7 @@ Two profiles, `EMPTY` and `LOADED`, selected by the user via the web app before 
 
 * `EMPTY`: full derived velocity/accel/jerk limits (Section 6).
 * `LOADED`: all velocity/accel/jerk limits derated by a configurable factor, default **50%**, defined as a single constant.
-* Defaults to `EMPTY` on boot and after every re-home.
+* Defaults to `EMPTY` on boot, e-stop clear, and disconnect-lockout recovery.
 * This requires no load-sensing hardware — it's an operator-declared state, which is appropriate given the current BOM.
 
 ---
@@ -256,7 +252,7 @@ Derive conservative default max velocity, acceleration, and jerk for each joint 
 * Output torque = motor torque × `STEPPER_GEAR_RATIO` × gearbox efficiency (assume ≈ 0.9, and note the assumption in a comment).
 * With that torque margin, the binding limit on acceleration and jerk is now most likely arm inertia, cable drag and mechanical stability rather than motor torque. Start at the 50–60% derating, test with the arm at full extension, and tune on the bench.
 * The step-rate consequence of any chosen output velocity is checked at compile time (Section 6.4).
-* Gearbox backlash is typically a fraction of a degree to about a degree at the output (check the datasheet). It does not affect the planner. Note in `StepperDriver` that homing and final approach should always arrive from the same rotation direction if repeatable positioning matters.
+* Gearbox backlash is typically a fraction of a degree to about a degree at the output (check the datasheet). It does not affect the planner. Positioning and final approaches should arrive from the same rotation direction if repeatability matters.
 
 ### 6.2 Time synchronization
 
@@ -289,7 +285,7 @@ constexpr uint32_t STEPPER_ISR_HZ               = 20000;   // step-generator ISR
 
 **Conversion rules (all inside `StepperDriver`):**
 
-* Target steps = `lroundf(angle_deg × STEPPER_STEPS_PER_OUTPUT_DEG)`, always computed **absolutely from the home position** as an `int32_t`. Never accumulate per-tick rounded deltas, because rounding errors would drift.
+* Target steps = `lroundf(angle_deg × STEPPER_STEPS_PER_OUTPUT_DEG)`, always computed **absolutely from the power-on zero reference** as an `int32_t`. Never accumulate per-tick rounded deltas, because rounding errors would drift.
 * The `DIR` polarity is unchanged by a planetary gearbox (sun-in, carrier-out turns the same direction). Keep a `STEPPER_DIR_INVERT` config flag regardless.
 * Microstep pins M0/M1/M2 are set by `StepperDriver::begin()` from `STEPPER_MICROSTEP_DIV` using the DRV8825 truth table below, **while EN is HIGH (driver disabled)**. Do not change the microstep mode while the coils are energised.
 
@@ -338,8 +334,8 @@ constexpr uint32_t STEPPER_ENABLE_SETTLE_MS      = 5;      // wait after EN low 
 
 **Behavior requirements:**
 
-1. **Enable before motion.** Any command that needs the base to move (a trajectory, a homing step) first calls `StepperDriver::enable()`. This drives EN low and starts a **non-blocking** settle timer. `StepperDriver::isReady()` returns true only after `STEPPER_ENABLE_SETTLE_MS` has elapsed. No STEP pulses are emitted before then, and the trajectory time base (`elapsed_ms`) starts only once `isReady()`.
-2. **Release only at true rest.** `StepperDriver::release()` may be called only when **all** hold: no active trajectory, commanded velocity is zero, `STEPPER_IDLE_RELEASE_DELAY_MS` has elapsed since the last emitted step, and the state is `IDLE` or `DISCONNECT_LOCKOUT`. Never release during `HOMING` or `MOVING`.
+1. **Enable before motion.** Any trajectory that needs the base to move first calls `StepperDriver::enable()`. This drives EN low and starts a **non-blocking** settle timer. `StepperDriver::isReady()` returns true only after `STEPPER_ENABLE_SETTLE_MS` has elapsed. No STEP pulses are emitted before then, and the trajectory time base (`elapsed_ms`) starts only once `isReady()`.
+2. **Release only at true rest.** `StepperDriver::release()` may be called only when **all** hold: no active trajectory, commanded velocity is zero, `STEPPER_IDLE_RELEASE_DELAY_MS` has elapsed since the last emitted step, and the state is `IDLE` or `DISCONNECT_LOCKOUT`. Never release during `MOVING`.
 3. **Position bookkeeping survives release.** The step counter, DIR level and microstep mode are preserved. Any step request while released first triggers `enable()` plus settle.
 4. **Safety gating.** `enable()` must consult `SafetyMonitor` and refuse in `ESTOP_TRIGGERED`. The E-stop path (Section 5.1) and the idle-release path both drive the same pin but are distinct code paths, and the log line must say which one acted.
 5. **Boot behavior.** `setup()` drives EN HIGH before any other stepper initialisation (the external pull-up in 2.6 covers the period before firmware runs).
@@ -361,7 +357,7 @@ constexpr uint32_t STEPPER_ENABLE_SETTLE_MS      = 5;      // wait after EN low 
 ### 7.1 Transport split
 
 * **WebSocket**: move commands, live IK step-by-step derivation + geometry for the visualizer, trajectory progress streaming, state/telemetry push, e-stop/clear commands, heartbeat.
-* **HTTP**: `GET /api/limits` (joint ranges, current max reach envelope, current payload profile), `GET /api/status` (state, homed flag, last error) — occasional/poll-style data that doesn't need push semantics.
+* **HTTP**: `GET /api/limits` (joint ranges, current max reach envelope, current payload profile), `GET /api/status` (state, last error) — occasional/poll-style data that doesn't need push semantics.
 * Static web app assets served from ESP32 (LittleFS) via `GET /`.
 
 ### 7.2 WiFi
@@ -376,7 +372,6 @@ All messages use a `type` envelope field. Design and implement exactly this shap
 
 ```json
 {"type": "move_command", "x": 20.0, "y": 5.0, "z": 15.0, "phi": -90.0, "posture": "elbow_down", "gripper": "closed"}
-{"type": "home_request"}
 {"type": "stop_request"}
 {"type": "clear_estop"}
 {"type": "set_payload_profile", "profile": "loaded"}
@@ -399,7 +394,7 @@ All messages use a `type` envelope field. Design and implement exactly this shap
 
 {"type":"trajectory_progress","progress":0.42,"joint_angles":{"theta0":0.0,"theta1":0.0,"theta2":0.0,"theta3":0.0},"elapsed_ms":210,"duration_ms":500}
 
-{"type":"state_update","state":"IDLE","homed":true,"payload_profile":"empty","gripper":"open"}
+{"type":"state_update","state":"IDLE","payload_profile":"empty","gripper":"open"}
 
 {"type":"error","code":"TARGET_UNREACHABLE","message":"..."}
 
@@ -412,7 +407,7 @@ All messages use a `type` envelope field. Design and implement exactly this shap
 
 ```
 GET /api/limits  → { "reach": {...}, "joint_limits": {...}, "payload_profile": "empty" }
-GET /api/status  → { "state": "IDLE", "homed": true, "last_error": null }
+GET /api/status  → { "state": "IDLE", "last_error": null }
 ```
 
 Implement corresponding JSON serialization/parsing in one dedicated module (`MessageSchema`) — do not scatter ad-hoc JSON construction across multiple files. Joint angles in all messages are output-joint angles (for θ0, the gearbox output).
@@ -424,7 +419,7 @@ Implement corresponding JSON serialization/parsing in one dedicated module (`Mes
 * Plain HTML/CSS/JS (no heavy framework) — keeps it small enough to live in ESP32 LittleFS for a fully self-contained demo (no laptop-hosted backend required; browser connects straight to the ESP32's IP).
 * **Canvas-based 2D visualizer**: draw the arm's side-view plane (post-base-rotation) showing L1/L2/L3 links, the target point, and both elbow-up and elbow-down candidate postures overlaid (highlight the invalid one if a posture fails limits) — driven directly by the `ik_solution` message.
 * **Step-by-step math panel**: renders the `steps` array from `ik_solution` in order, each with its label, symbolic expression, and computed value — this is the "educational" requirement, keep it as a simple scrollable list, no need for anything fancier.
-* Controls: numeric x/y/z/φ inputs, posture selector (enabled only for postures marked valid), gripper toggle, payload profile toggle, Home button, Stop button, and a prominent connection/state indicator.
+* Controls: numeric x/y/z/φ inputs, posture selector (enabled only for postures marked valid), gripper toggle, payload profile toggle, Stop button, and a prominent connection/state indicator.
 * Max-reach values from `/api/limits` displayed persistently, not just on error.
 * **[REV 2]** No functional change is required in the web app for Revision 2. If the optional `base_coils` field (6.5) is implemented, the UI may show it as a small status indicator, and must tolerate its absence.
 
@@ -444,7 +439,7 @@ src/
   main.cpp
 config/
   Pins.h                 // all GPIO assignments, one source of truth (REV 2: servo PWM pins added, I2C pins removed)
-  JointLimits.h          // ranges, home angles, soft limits, link lengths (L1/L2/L3/d1); all in OUTPUT-shaft degrees
+  JointLimits.h          // ranges, power-on/neutral angles, soft limits, link lengths (L1/L2/L3/d1); all in OUTPUT-shaft degrees
   MotionConfig.h         // velocity/accel/jerk per joint, payload derating factor,
                          // REV 2: stepper gear ratio / microstep / ISR rate / coil-release constants
   ServoConfig.h          // REV 2 (new): per-servo pulse min/max (µs), angular range, invert flag, trim; LEDC freq/resolution.
@@ -458,7 +453,6 @@ motion/
   ServoDriver.h/.cpp       // REV 2: ESP32 LEDC PWM servo driver (replaces PCA9685 wrapper); public interface unchanged
 control/
   StateMachine.h/.cpp
-  HomingSequence.h/.cpp
   SafetyMonitor.h/.cpp     // e-stop ISR, disconnect-lockout logic, watchdog; REV 2: gates StepperDriver::enable()
 comms/
   WiFiSetup.h/.cpp         // WiFiManager integration
@@ -478,7 +472,7 @@ data/                       // LittleFS contents: index.html, style.css, app.js,
 
 ```cpp
 enum class ServoId { SHOULDER, ELBOW, WRIST, GRIPPER };
-bool ServoDriver::begin();                         // attach LEDC channels with the HOME pulse already as the initial duty
+bool ServoDriver::begin();                         // attach LEDC channels with the neutral pulse already as the initial duty
 void ServoDriver::writeAngleDeg(ServoId, float);   // clamp to soft limits → µs (ServoConfig) → LEDC duty
 void ServoDriver::freeze();                        // e-stop: stop updating; LEDC keeps emitting the last duty
 ```
@@ -493,7 +487,7 @@ Command flow: `NetworkTask` receives a command → runs IK inline (cheap, analyt
 2. **Kinematics module**, fully unit-testable in isolation (write a few known-input/expected-output cases). Confirm this works before touching hardware code at all.
 3. **Motion profiling** (`SCurveProfile`, `TrajectoryPlanner`) — testable on desktop with printed/plotted output, no hardware needed.
 4. **Hardware drivers**: `StepperDriver` (timer ISR), `ServoDriver` (**[REV 2]** LEDC PWM). Bench-test each independently (e.g., command a known angle/step count and verify by eye) before integrating.
-5. **State machine + safety**: `StateMachine`, `HomingSequence`, `SafetyMonitor` (e-stop ISR + disconnect lockout).
+5. **State machine + safety**: `StateMachine`, `SafetyMonitor` (e-stop ISR + disconnect lockout).
 6. **Networking**: `WiFiSetup`, `WebServerManager`, `WebSocketHandler`, `MessageSchema`.
 7. **Task wiring**: `NetworkTask` + `MotionTask` + the queue between them.
 8. **Web app**: static UI, canvas visualizer, step-by-step panel — build and test against the now-working firmware API.
@@ -513,7 +507,7 @@ Tag the current code. Run all native unit tests and record that they pass. These
 ### Step 1 — Servo swap (PCA9685 → LEDC)
 a. `Pins.h`: add `SERVO_SHOULDER_PWM=4`, `SERVO_ELBOW_PWM=5`, `SERVO_WRIST_PWM=6`, `SERVO_GRIPPER_PWM=7`; remove `I2C_SDA`/`I2C_SCL`.
 b. Create `ServoConfig.h` with LEDC frequency (50 Hz), resolution (14 bit), and per-servo `pulseMinUs`, `pulseMaxUs`, `angleRangeDeg`, `invert`, `trimUs`. Start with conservative pulses (about 600–2400 µs) and widen on the bench: driving a servo past its mechanical end stop causes buzzing and can burn the servo. Move any PCA9685-specific constants here or delete them.
-c. Rewrite the **internals** of `ServoDriver` only; keep the public interface contract from Section 10. Initial duty at attach = home pulse.
+c. Rewrite the **internals** of `ServoDriver` only; keep the public interface contract from Section 10. Initial duty at attach = neutral pulse.
 d. `platformio.ini`: remove the PCA9685 library and `Wire` if unused; pin the Arduino-ESP32 core version.
 e. Remove the I²C initialisation from `main.cpp`/setup code.
 f. `SimMode`: update dry-run logging as in Section 9.
@@ -525,18 +519,18 @@ Confirm the implemented e-stop polarity matches Section 2.3 (LOW = safe, HIGH = 
 
 ### Step 3 — Gearbox and microstepping
 a. `MotionConfig.h`: add the stepper block from Section 6.4. Re-derive base velocity/accel/jerk in **output** units (Section 6.1); do not carry over the old values.
-b. `StepperDriver`: centralise `stepsFromDeg()` / `degFromSteps()` using `STEPPER_STEPS_PER_OUTPUT_DEG` (absolute, from home); set M0/M1/M2 from `STEPPER_MICROSTEP_DIV` in `begin()` while EN is HIGH. Add a native unit test: with defaults, 90° → 4000 steps, 360° → 16000 steps, and `degFromSteps(stepsFromDeg(x))` round-trips within one microstep.
+b. `StepperDriver`: centralise `stepsFromDeg()` / `degFromSteps()` using `STEPPER_STEPS_PER_OUTPUT_DEG` (absolute, from the power-on zero reference); set M0/M1/M2 from `STEPPER_MICROSTEP_DIV` in `begin()` while EN is HIGH. Add a native unit test: with defaults, 90° → 4000 steps, 360° → 16000 steps, and `degFromSteps(stepsFromDeg(x))` round-trips within one microstep.
 c. **Step-rate audit.** Check how many pulses the existing step ISR can emit per second. If it is limited to one pulse per 1 kHz tick, replace it with a dedicated ISR at `STEPPER_ISR_HZ` that emits at most one step per tick. The 1 kHz trajectory update still sets the target. Add the `static_assert` from Section 6.4.
 d. **Measure the real gear ratio.** Mark the gearbox output shaft, command a 360° base rotation (16,000 steps at the defaults), and measure the actual rotation `θ_actual`. Set `STEPPER_GEAR_RATIO_new = STEPPER_GEAR_RATIO_old × 360 / θ_actual`. A 5.18:1 unit entered as 5.0 would otherwise be off by about 3.6% (over 6° at the ±170° limit).
-e. `HomingSequence`: express seek speed, back-off, and maximum search rotation in output degrees and °/s. Confirm homing still reaches the switch, the backoff behavior is unchanged, and the timeout produces `HOMING_FAILED` when the switch is unplugged.
+e. Confirm the step counter starts at zero at power-on and that the operator-positioned base remains within its ±170° soft limits.
 f. Do the electrical setup in Section 2.6 (VREF, heatsink, EN pull-up, capacitor) before running the base under load.
 
 ### Step 4 — Coil power management (Section 6.5)
 a. Add `enable()` / `release()` / `isReady()` to `StepperDriver`, using non-blocking timing. Add the three constants.
 b. `SafetyMonitor` gates `enable()` (refuse in `ESTOP_TRIGGERED`).
-c. `MotionTask`: enable before starting a trajectory or a homing move, release per the conditions in Section 6.5. `setup()` drives EN HIGH first.
-d. **Drift test (required before leaving the feature on):** run 50 cycles of: move → idle past `STEPPER_IDLE_RELEASE_DELAY_MS` (coils released, gripper opens/closes) → move back. Then home and record the step offset at which the limit switch triggers versus the same test with `STEPPER_IDLE_RELEASE_ENABLED = false`. If the base visibly shifts or the homing offset differs by more than about 0.1° (output), set the flag to `false`, report the finding, and do not hide it.
-e. Verify the E-stop still holds EN HIGH and that `clear_estop` + re-home is required to resume.
+c. `MotionTask`: enable before starting a trajectory, release per the conditions in Section 6.5. `setup()` drives EN HIGH first.
+d. **Drift test (required before leaving the feature on):** run 50 cycles of: move → idle past `STEPPER_IDLE_RELEASE_DELAY_MS` (coils released, gripper opens/closes) → move back. Compare the final base position with `STEPPER_IDLE_RELEASE_ENABLED = false`. If the base visibly shifts or the final position differs by more than about 0.1° (output), set the flag to `false`, report the finding, and do not hide it.
+e. Verify the E-stop still holds EN HIGH and that an explicit `clear_estop` with the safe circuit is required to resume.
 
 ### Step 5 — Regression
 All Step 0 tests pass without edits. Full end-to-end run from the web app.

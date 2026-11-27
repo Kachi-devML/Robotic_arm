@@ -35,10 +35,9 @@ bool WebSocketHandler::connected() const {
 }
 
 void WebSocketHandler::sendStateUpdate(const char* state,
-                                       bool homed,
                                        const char* payloadProfile,
                                        const char* gripper) {
-    broadcast(buildStateUpdate(state, homed, payloadProfile, gripper));
+    broadcast(buildStateUpdate(state, payloadProfile, gripper));
 }
 
 void WebSocketHandler::sendError(const char* code, const char* message) {

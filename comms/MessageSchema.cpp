@@ -65,13 +65,11 @@ bool parseSetPayloadProfile(const String& message, String& profile) {
 }
 
 String buildStateUpdate(const char* state,
-                        bool homed,
                         const char* payloadProfile,
                         const char* gripper) {
     StaticJsonDocument<256> doc;
     doc["type"] = "state_update";
     doc["state"] = state;
-    doc["homed"] = homed;
     doc["payload_profile"] = payloadProfile;
     doc["gripper"] = gripper;
 
@@ -138,11 +136,9 @@ String buildLimitsResponse(const char* payloadProfile,
 }
 
 String buildStatusResponse(const char* state,
-                          bool homed,
                           const char* lastError) {
     StaticJsonDocument<128> doc;
     doc["state"] = state;
-    doc["homed"] = homed;
     if (lastError != nullptr) {
         doc["last_error"] = lastError;
     } else {
